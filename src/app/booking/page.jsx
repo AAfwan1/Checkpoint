@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -776,6 +777,11 @@ export default function BookingPage() {
     }, 100);
   }
 
+  function handleAddMore() {
+    setCartOpen(false);
+    scrollToSection(serviceRef);
+  }
+
   function handleFacilityChange(key) {
     setSelectedFacility(key);
     setSelectedServiceId("");
@@ -1176,66 +1182,6 @@ export default function BookingPage() {
 
       <section className="px-4 pb-24 sm:px-6">
         <div className="mx-auto max-w-7xl">
-          {/* CUSTOMER DETAILS */}
-
-          <div className="mb-6 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:p-7">
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold uppercase tracking-[0.2em] text-blue-400">
-                YOUR DETAILS
-              </h2>
-              <p className="mt-2 text-sm text-white/40">
-                These details will be used for your booking and payment.
-              </p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              <CustomerInput
-                icon={<FiUser size={16} />}
-                label="Name"
-                value={customer.name}
-                placeholder="Your full name"
-                type="text"
-                autoComplete="name"
-                onChange={(value) =>
-                  setCustomer((current) => ({
-                    ...current,
-                    name: value,
-                  }))
-                }
-              />
-
-              <CustomerInput
-                icon={<FiMail size={16} />}
-                label="Email"
-                value={customer.email}
-                placeholder="you@example.com"
-                type="email"
-                autoComplete="email"
-                onChange={(value) =>
-                  setCustomer((current) => ({
-                    ...current,
-                    email: value,
-                  }))
-                }
-              />
-
-              <CustomerInput
-                icon={<FiPhone size={16} />}
-                label="Phone"
-                value={customer.phone}
-                placeholder="+880 1XXXXXXXXX"
-                type="tel"
-                autoComplete="tel"
-                onChange={(value) =>
-                  setCustomer((current) => ({
-                    ...current,
-                    phone: value,
-                  }))
-                }
-              />
-            </div>
-          </div>
-
           {facilityError && (
             <div className="mb-6 rounded-2xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-sm text-red-300">
               {facilityError}
@@ -1369,8 +1315,8 @@ export default function BookingPage() {
                             active={selectedServiceId === service.id}
                             startTime={
                               selectedServiceId === service.id
-                                ? selectedSlot
-                                : ""
+                                  ? selectedSlot
+                                  : ""
                             }
                             onClick={() =>
                               handleServiceChange(service.id)
@@ -1833,6 +1779,66 @@ export default function BookingPage() {
                 </div>
               )}
 
+              {/* CUSTOMER DETAILS — MOVED HERE */}
+
+              <div className="mt-6 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:p-7">
+                <div className="mb-6">
+                  <h2 className="text-2xl font-semibold uppercase tracking-[0.2em] text-blue-400">
+                    YOUR DETAILS
+                  </h2>
+                  <p className="mt-2 text-sm text-white/40">
+                    These details will be used for your booking and payment.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <CustomerInput
+                    icon={<FiUser size={16} />}
+                    label="Name"
+                    value={customer.name}
+                    placeholder="Your full name"
+                    type="text"
+                    autoComplete="name"
+                    onChange={(value) =>
+                      setCustomer((current) => ({
+                        ...current,
+                        name: value,
+                      }))
+                    }
+                  />
+
+                  <CustomerInput
+                    icon={<FiMail size={16} />}
+                    label="Email"
+                    value={customer.email}
+                    placeholder="you@example.com"
+                    type="email"
+                    autoComplete="email"
+                    onChange={(value) =>
+                      setCustomer((current) => ({
+                        ...current,
+                        email: value,
+                      }))
+                    }
+                  />
+
+                  <CustomerInput
+                    icon={<FiPhone size={16} />}
+                    label="Phone"
+                    value={customer.phone}
+                    placeholder="+880 1XXXXXXXXX"
+                    type="tel"
+                    autoComplete="tel"
+                    onChange={(value) =>
+                      setCustomer((current) => ({
+                        ...current,
+                        phone: value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
               {/* QUANTITY */}
 
               <div
@@ -1973,6 +1979,7 @@ export default function BookingPage() {
                   count={cartCount}
                   onRemove={removeFromCart}
                   onPay={handleSecurePayment}
+                  onAddMore={handleAddMore}
                   submitting={submitting}
                 />
               </div>
@@ -2041,6 +2048,7 @@ export default function BookingPage() {
               count={cartCount}
               onRemove={removeFromCart}
               onPay={handleSecurePayment}
+              onAddMore={handleAddMore}
               submitting={submitting}
             />
           </div>
@@ -2211,6 +2219,7 @@ function CartContent({
   count,
   onRemove,
   onPay,
+  onAddMore,
   submitting,
 }) {
   return (
@@ -2240,6 +2249,15 @@ function CartContent({
           <p className="mt-1 text-xs leading-5 text-white/30">
             Add a facility or service to see it here.
           </p>
+
+          <button
+            type="button"
+            onClick={onAddMore}
+            className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] text-sm font-semibold text-white/70 transition hover:border-blue-500/40 hover:bg-blue-500/[0.05] hover:text-white"
+          >
+            <FiPlus size={16} />
+            Add More
+          </button>
         </div>
       ) : (
         <>
@@ -2332,9 +2350,18 @@ function CartContent({
 
             <button
               type="button"
+              onClick={onAddMore}
+              className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] text-sm font-semibold text-white/70 transition hover:border-blue-500/40 hover:bg-blue-500/[0.05] hover:text-white"
+            >
+              <FiPlus size={16} />
+              Add More
+            </button>
+
+            <button
+              type="button"
               onClick={onPay}
               disabled={submitting}
-              className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 text-sm font-semibold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 text-sm font-semibold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting
                 ? "Preparing secure payment..."
