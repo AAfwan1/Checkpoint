@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -22,10 +21,7 @@ import {
 
 const FITNESS_GROUPS = [
   { title: "Gym", names: ["gym"] },
-  {
-    title: "Swimming Pool",
-    names: ["swimming pool", "pool"],
-  },
+  { title: "Swimming Pool", names: ["swimming pool", "pool"] },
   {
     title: "Gym + Swimming Pool",
     names: ["gym + pool", "gym + swimming pool", "gym and pool"],
@@ -83,6 +79,7 @@ const DHAKA_TIME_ZONE = "Asia/Dhaka";
 
 function formatPrice(value) {
   const number = Number(value);
+
   return Number.isFinite(number)
     ? `৳${number.toLocaleString("en-BD")}`
     : "৳0";
@@ -133,9 +130,17 @@ function getFitnessGroupName(facilityName) {
   );
 }
 
+/*
+ * Only these non-membership fitness services are date-only.
+ * They do not require a time slot or slot-capacity availability check.
+ */
 function isUntimedDayPass(service) {
+  if (!service || isMembershipService(service)) return false;
+
+  const serviceName = normalizeName(service.name);
+
   return (
-    service?.name?.toLowerCase().includes("day pass") &&
+    serviceName.includes("day pass") &&
     Boolean(getFitnessGroupName(service.facilityName))
   );
 }
@@ -266,14 +271,8 @@ function timeToMinutes(value) {
 }
 
 /*
- * FRONTEND DISPLAY CALCULATION
- *
- * The discount settings come from the /api/facilites response.
- * This function calculates a display/cart price only.
- * The booking backend must independently calculate the actual price.
- *
- * Discount applies to Playground slot start times:
- * 11:00 AM <= start time < 4:00 PM.
+ * Frontend display calculation only.
+ * The booking backend must calculate and validate the actual price.
  */
 function getServicePriceDetails(service, startTime) {
   const originalPrice = Number(service?.price || 0);
@@ -344,10 +343,17 @@ function getMinimumQuantity(service) {
   return Number.isInteger(value) && value > 0 ? value : 1;
 }
 
-function getMaximumQuantity(service) {
+/*
+ * Day passes must not inherit the general facility capacity as a
+ * per-order quantity limit. An explicitly configured maximumQuantity
+ * can still limit a single order.
+ */
+function getMaximumQuantity(service, { ignoreCapacity = false } = {}) {
   const value = Number(service?.maximumQuantity);
 
   if (Number.isInteger(value) && value > 0) return value;
+
+  if (ignoreCapacity) return null;
 
   const capacity = Number(service?.capacity);
 
@@ -396,8 +402,6 @@ export default function BookingPage() {
   const dateRef = useRef(null);
   const timeRef = useRef(null);
   const quantityRef = useRef(null);
-
-  // NEW: Used to scroll to Membership Rules when a membership is selected.
   const membershipRulesRef = useRef(null);
 
   /* LOAD FACILITIES */
@@ -569,7 +573,12 @@ export default function BookingPage() {
     [currentServices, selectedServiceId]
   );
 
-  /* PRICE DETAILS FOR THE SELECTED SERVICE AND SLOT */
+  const isMembership = Boolean(selectedService?.membership);
+  const isMovie = Boolean(selectedService?.movie);
+  const isDayPass = isUntimedDayPass(selectedService);
+  const needsTimeSlot = !isMembership && !isDayPass;
+
+  /* PRICE DETAILS */
 
   const selectedPriceDetails = useMemo(
     () => getServicePriceDetails(selectedService, selectedSlot),
@@ -598,7 +607,7 @@ export default function BookingPage() {
     }
   }, [currentServices, selectedServiceId]);
 
-  /* LOAD AVAILABILITY */
+  /* LOAD AVAILABILITY ONLY FOR SLOT-BASED SERVICES */
 
   useEffect(() => {
     const controller = new AbortController();
@@ -607,11 +616,13 @@ export default function BookingPage() {
       if (
         !selectedDate ||
         !selectedService ||
-        isMembershipService(selectedService)
+        isMembershipService(selectedService) ||
+        isUntimedDayPass(selectedService)
       ) {
         setAvailabilitySlots([]);
         setAvailabilityError("");
         setLoadingAvailability(false);
+        setSelectedSlot("");
         return;
       }
 
@@ -692,13 +703,12 @@ export default function BookingPage() {
     }
   }, [selectedSlot, visibleAvailabilitySlots]);
 
-  const isMembership = Boolean(selectedService?.membership);
-  const isMovie = Boolean(selectedService?.movie);
-
   const minimumQuantity = getMinimumQuantity(selectedService);
-  const maximumQuantity = getMaximumQuantity(selectedService);
 
-  // Uses the discounted unit price only when the selected slot qualifies.
+  const maximumQuantity = getMaximumQuantity(selectedService, {
+    ignoreCapacity: isDayPass,
+  });
+
   const itemTotal = selectedService
     ? selectedPriceDetails.finalPrice * quantity
     : 0;
@@ -723,6 +733,7 @@ export default function BookingPage() {
 
   const selectedSlotIsValid =
     isMembership ||
+    isDayPass ||
     visibleAvailabilitySlots.some(
       (slot) =>
         slot.startTime === selectedSlot &&
@@ -779,10 +790,16 @@ export default function BookingPage() {
     scrollToSection(serviceRef);
   }
 
-  // UPDATED: Membership selection scrolls to Membership Rules.
+  /*
+   * Memberships and day passes both scroll to the rules section.
+   * The same ref is used because the displayed rules section changes
+   * according to the selected service.
+   */
   function handleServiceChange(id) {
     const service = currentServices.find((item) => item.id === id);
+
     const membership = isMembershipService(service);
+    const dayPass = isUntimedDayPass(service);
 
     setSelectedServiceId(id);
     setSelectedDate("");
@@ -794,7 +811,7 @@ export default function BookingPage() {
     setSubmitError("");
 
     scrollToSection(
-      membership ? membershipRulesRef : dateRef
+      membership || dayPass ? membershipRulesRef : dateRef
     );
   }
 
@@ -802,8 +819,12 @@ export default function BookingPage() {
     setSelectedDate(value);
     setSelectedSlot("");
 
+    const dateOnly = isUntimedDayPass(selectedService);
+
     scrollToSection(
-      isMembershipService(selectedService) ? quantityRef : timeRef
+      isMembershipService(selectedService) || dateOnly
+        ? quantityRef
+        : timeRef
     );
   }
 
@@ -836,7 +857,10 @@ export default function BookingPage() {
     }
 
     scrollToSection(
-      isMembershipService(selectedService) ? quantityRef : timeRef
+      isMembershipService(selectedService) ||
+        isUntimedDayPass(selectedService)
+        ? quantityRef
+        : timeRef
     );
   }
 
@@ -913,28 +937,37 @@ export default function BookingPage() {
       return;
     }
 
-    const selectedAvailability = visibleAvailabilitySlots.find(
-      (item) =>
-        item.startTime === selectedSlot &&
-        item.available !== false &&
-        item.status !== "full" &&
-        Number(item.remaining ?? 1) > 0
-    );
+    const selectedAvailability = needsTimeSlot
+      ? visibleAvailabilitySlots.find(
+          (item) =>
+            item.startTime === selectedSlot &&
+            item.available !== false &&
+            item.status !== "full" &&
+            Number(item.remaining ?? 1) > 0
+        )
+      : null;
 
+    /*
+     * Day passes intentionally have no selected start/end time.
+     * Membership keeps its existing opening-hours representation.
+     */
     const startTime = isMembership
       ? OPEN_TIME
-      : selectedAvailability?.startTime || "";
+      : isDayPass
+        ? ""
+        : selectedAvailability?.startTime || "";
 
     const endTime = isMembership
       ? CLOSE_TIME
-      : selectedAvailability?.endTime || "";
+      : isDayPass
+        ? ""
+        : selectedAvailability?.endTime || "";
 
-    if (!isMembership && (!startTime || !endTime)) {
+    if (needsTimeSlot && (!startTime || !endTime)) {
       setSubmitError("Please select a valid available time slot.");
       return;
     }
 
-    // Calculate the frontend display/cart price using the selected start time.
     const priceDetails = getServicePriceDetails(
       selectedService,
       startTime
@@ -943,25 +976,20 @@ export default function BookingPage() {
     const price = priceDetails.finalPrice;
 
     const newItem = {
-      id: `${selectedService.facilityId}-${selectedService.id}-${selectedDate}-${startTime}-${Date.now()}`,
+      id: `${selectedService.facilityId}-${selectedService.id}-${selectedDate}-${startTime || "date-only"}-${Date.now()}`,
       facilityId: selectedService.facilityId,
       facilityName: selectedService.facilityName,
       serviceId: selectedService.id,
       title: selectedService.name,
-
-      // Unit price used for the frontend cart display.
       price,
-
-      // Preserve the original price and discount details for the cart.
       originalPrice: priceDetails.originalPrice,
       discountAmount: priceDetails.discountAmount,
       discountPercentage: priceDetails.discountPercentage,
-
       quantity,
       date: selectedDate,
       startTime,
       endTime,
-      slot: isMembership ? null : startTime,
+      slot: needsTimeSlot ? startTime : null,
       movie: isMovie ? movieName.trim() : "",
       total: price * quantity,
     };
@@ -1000,14 +1028,12 @@ export default function BookingPage() {
     setSubmitting(true);
 
     try {
-      // Never send client prices/totals as authoritative payment amounts.
-      // The backend must calculate prices and discounts independently.
       const items = cart.map((item) => ({
         facilityId: item.facilityId,
         serviceId: item.serviceId,
         date: item.date,
-        startTime: item.startTime,
-        endTime: item.endTime,
+        ...(item.startTime ? { startTime: item.startTime } : {}),
+        ...(item.endTime ? { endTime: item.endTime } : {}),
         quantity: item.quantity,
         movieName: item.movie || "",
       }));
@@ -1233,6 +1259,7 @@ export default function BookingPage() {
                 <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   {FACILITY_UI.map((item) => {
                     const active = selectedFacility === item.key;
+                    const isPrivateCinema = item.key === "movie";
 
                     return (
                       <button
@@ -1240,7 +1267,11 @@ export default function BookingPage() {
                         type="button"
                         onClick={() => handleFacilityChange(item.key)}
                         aria-pressed={active}
-                        className={`group relative min-h-[160px] overflow-hidden rounded-2xl border text-left transition sm:min-h-[180px] ${
+                        className={`group relative min-h-[160px] w-full overflow-hidden rounded-2xl border text-left transition sm:min-h-[180px] ${
+                          isPrivateCinema
+                            ? "col-span-2 mx-auto w-[calc(50%-0.25rem)] sm:w-[calc(50%-0.375rem)]"
+                            : ""
+                        } ${
                           active
                             ? "border-blue-500/60"
                             : "border-white/10 hover:border-white/20"
@@ -1251,7 +1282,7 @@ export default function BookingPage() {
                           alt={item.title}
                           loading="lazy"
                           decoding="async"
-                          className="absolute inset-0 h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-105 group-hover:opacity-55"
+                          className="absolute inset-0 h-full w-full object-cover opacity-90 transition duration-500 group-hover:scale-105 group-hover:opacity-85"
                         />
 
                         <div className="absolute inset-0 bg-gradient-to-t from-[#030712] via-[#030712]/70 to-transparent" />
@@ -1370,9 +1401,9 @@ export default function BookingPage() {
                 )}
               </div>
 
-              {/* MEMBERSHIP RULES */}
+              {/* MEMBERSHIP / DAY PASS RULES */}
 
-              {isMembership && (
+              {(isMembership || isDayPass) && (
                 <div
                   ref={membershipRulesRef}
                   className="mt-6 scroll-mt-28 rounded-3xl border border-blue-500/20 bg-blue-500/[0.05] p-5 sm:scroll-mt-32 sm:p-7"
@@ -1380,28 +1411,48 @@ export default function BookingPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">
                     03
                   </p>
+
                   <h2 className="mt-2 text-2xl font-semibold">
-                    Membership Rules
+                    {isMembership ? "Membership Rules" : "Day Pass Rules"}
                   </h2>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                    {[
-                      {
-                        title: "11:00 AM – 11:00 PM",
-                        description:
-                          "Come anytime during opening hours.",
-                      },
-                      {
-                        title: "One entry per day",
-                        description:
-                          "Membership allows one entry per day.",
-                      },
-                      {
-                        title: "No re-entry",
-                        description:
-                          "Leaving the facility ends that day's entry.",
-                      },
-                    ].map((rule, index) => (
+                    {(isMembership
+                      ? [
+                          {
+                            title: "11:00 AM – 11:00 PM",
+                            description:
+                              "Come anytime during opening hours.",
+                          },
+                          {
+                            title: "One entry per day",
+                            description:
+                              "Membership allows one entry per day.",
+                          },
+                          {
+                            title: "No re-entry",
+                            description:
+                              "Leaving the facility ends that day's entry.",
+                          },
+                        ]
+                      : [
+                          {
+                            title: "11:00 AM – 11:00 PM",
+                            description:
+                              "Use your day pass anytime during opening hours.",
+                          },
+                          {
+                            title: "Selected date only",
+                            description:
+                              "Your day pass is valid for the date selected during booking.",
+                          },
+                          {
+                            title: "No time slot required",
+                            description:
+                              "Choose your date and quantity without selecting a time slot.",
+                          },
+                        ]
+                    ).map((rule, index) => (
                       <div
                         key={rule.title}
                         className="rounded-2xl border border-white/10 bg-[#030712] p-4"
@@ -1410,6 +1461,7 @@ export default function BookingPage() {
                           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-xs font-semibold text-blue-300">
                             {index + 1}
                           </span>
+
                           <div>
                             <p className="text-sm font-medium">
                               {rule.title}
@@ -1458,6 +1510,7 @@ export default function BookingPage() {
                       <p className="text-base font-semibold">
                         {calendarMonthName} {calendarYear}
                       </p>
+
                       <button
                         type="button"
                         onClick={goToCurrentMonth}
@@ -1562,10 +1615,12 @@ export default function BookingPage() {
                     size={17}
                     className="shrink-0 text-blue-400"
                   />
+
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wider text-white/30">
                       Selected date
                     </p>
+
                     <p className="mt-1 truncate text-sm font-medium">
                       {selectedDate
                         ? new Date(
@@ -1582,9 +1637,9 @@ export default function BookingPage() {
                 </div>
               </div>
 
-              {/* TIME */}
+              {/* TIME: ONLY FOR SLOT-BASED SERVICES */}
 
-              {!isMembership && (
+              {needsTimeSlot && (
                 <div
                   ref={timeRef}
                   className="mt-6 scroll-mt-28 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:scroll-mt-32 sm:p-7"
@@ -1801,7 +1856,9 @@ export default function BookingPage() {
                         ? "Choose the number of seats you need."
                         : isMembership
                           ? "Membership is booked for one member at a time."
-                          : "Choose how many people will use this service."}
+                          : isDayPass
+                            ? "Choose how many day passes you need for the selected date."
+                            : "Choose how many people will use this service."}
                     </p>
                   </div>
 
@@ -1835,7 +1892,14 @@ export default function BookingPage() {
 
                 {maximumQuantity !== null && (
                   <p className="mt-4 text-xs text-white/30">
-                    Maximum: {maximumQuantity}
+                    Maximum per order: {maximumQuantity}
+                  </p>
+                )}
+
+                {isDayPass && (
+                  <p className="mt-3 text-xs leading-5 text-white/35">
+                    Day passes do not require a time slot. Bookings for
+                    this date are not limited by time-slot capacity.
                   </p>
                 )}
 
@@ -1885,7 +1949,7 @@ export default function BookingPage() {
                 {!canAdd && (
                   <p className="mt-3 text-center text-xs text-white/25">
                     Select the required date
-                    {!isMembership ? " and an available time" : ""}
+                    {needsTimeSlot ? " and an available time" : ""}
                     {isMovie ? " and movie" : ""} and complete your
                     contact details to continue.
                   </p>
@@ -2039,7 +2103,6 @@ function ServiceCard({
           : "per booking";
 
   const duration = serviceDuration(service);
-
   const pricing = getServicePriceDetails(service, startTime);
 
   return (
@@ -2070,6 +2133,12 @@ function ServiceCard({
           {service.membership && (
             <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider text-blue-300 sm:text-[9px]">
               Membership
+            </span>
+          )}
+
+          {isUntimedDayPass(service) && (
+            <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider text-blue-300 sm:text-[9px]">
+              Date only
             </span>
           )}
 
