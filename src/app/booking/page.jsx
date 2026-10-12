@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FiArrowLeft,
   FiArrowRight,
@@ -131,10 +131,6 @@ function getFitnessGroupName(facilityName) {
   );
 }
 
-/*
- * Only these non-membership fitness services are date-only.
- * They do not require a time slot or slot-capacity availability check.
- */
 function isUntimedDayPass(service) {
   if (!service || isMembershipService(service)) return false;
 
@@ -147,10 +143,7 @@ function isUntimedDayPass(service) {
 }
 
 function serviceDuration(service) {
-  if (
-    isMembershipService(service) ||
-    isUntimedDayPass(service)
-  ) {
+  if (isMembershipService(service) || isUntimedDayPass(service)) {
     return null;
   }
 
@@ -182,13 +175,25 @@ function formatDateValue(year, month, day) {
 }
 
 function parseDateValue(value) {
-  if (!value) return null;
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
 
   const [year, month, day] = value.split("-").map(Number);
 
-  return year && month && day
-    ? { year, month: month - 1, day }
-    : null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return { year, month: month - 1, day };
 }
 
 function isSameDate(value, year, month, day) {
@@ -199,16 +204,6 @@ function isSameDate(value, year, month, day) {
       parsed.year === year &&
       parsed.month === month &&
       parsed.day === day
-  );
-}
-
-function isToday(year, month, day) {
-  const today = new Date();
-
-  return (
-    today.getFullYear() === year &&
-    today.getMonth() === month &&
-    today.getDate() === day
   );
 }
 
@@ -271,10 +266,6 @@ function timeToMinutes(value) {
   return hours * 60 + minutes;
 }
 
-/*
- * Frontend display calculation only.
- * The booking backend must calculate and validate the actual price.
- */
 function getServicePriceDetails(service, startTime) {
   const originalPrice = Number(service?.price || 0);
   const discount = service?.offPeakDiscount;
@@ -344,11 +335,6 @@ function getMinimumQuantity(service) {
   return Number.isInteger(value) && value > 0 ? value : 1;
 }
 
-/*
- * Day passes must not inherit the general facility capacity as a
- * per-order quantity limit. An explicitly configured maximumQuantity
- * can still limit a single order.
- */
 function getMaximumQuantity(service, { ignoreCapacity = false } = {}) {
   const value = Number(service?.maximumQuantity);
 
@@ -366,8 +352,6 @@ function getMaximumQuantity(service, { ignoreCapacity = false } = {}) {
 }
 
 export default function BookingPage() {
-  const today = new Date();
-
   const [selectedFacility, setSelectedFacility] = useState("gym");
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
@@ -395,8 +379,16 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
 
-  const [calendarMonth, setCalendarMonth] = useState(today.getMonth());
-  const [calendarYear, setCalendarYear] = useState(today.getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const { date } = getDhakaDateTime();
+    return Number(date.slice(5, 7)) - 1;
+  });
+
+  const [calendarYear, setCalendarYear] = useState(() => {
+    const { date } = getDhakaDateTime();
+    return Number(date.slice(0, 4));
+  });
+
   const [clockTick, setClockTick] = useState(0);
 
   const serviceRef = useRef(null);
@@ -404,6 +396,7 @@ export default function BookingPage() {
   const timeRef = useRef(null);
   const quantityRef = useRef(null);
   const membershipRulesRef = useRef(null);
+  const customerDetailsRef = useRef(null);
 
   /* LOAD FACILITIES */
 
@@ -431,15 +424,19 @@ export default function BookingPage() {
           );
         }
 
+        if (controller.signal.aborted) return;
+
         setApiFacilities(
           Array.isArray(data.facilities) ? data.facilities : []
         );
       } catch (error) {
         if (error.name === "AbortError") return;
 
-        setFacilityError(
-          error?.message || "Failed to load facilities."
-        );
+        if (!controller.signal.aborted) {
+          setFacilityError(
+            error?.message || "Failed to load facilities."
+          );
+        }
       } finally {
         if (!controller.signal.aborted) {
           setLoadingFacilities(false);
@@ -455,9 +452,10 @@ export default function BookingPage() {
   /* DHAKA CLOCK */
 
   useEffect(() => {
-    if (!selectedDate) return undefined;
-
     const refreshClock = () => setClockTick((value) => value + 1);
+
+    refreshClock();
+
     const intervalId = window.setInterval(refreshClock, 30000);
 
     document.addEventListener("visibilitychange", refreshClock);
@@ -468,12 +466,20 @@ export default function BookingPage() {
       document.removeEventListener("visibilitychange", refreshClock);
       window.removeEventListener("focus", refreshClock);
     };
-  }, [selectedDate]);
+  }, []);
 
   const dhakaNow = useMemo(
     () => getDhakaDateTime(),
     [clockTick]
   );
+
+  const currentDhakaYear = Number(dhakaNow.date.slice(0, 4));
+  const currentDhakaMonth = Number(dhakaNow.date.slice(5, 7)) - 1;
+
+  const isPreviousMonthDisabled =
+    calendarYear < currentDhakaYear ||
+    (calendarYear === currentDhakaYear &&
+      calendarMonth <= currentDhakaMonth);
 
   /* CURRENT SERVICES */
 
@@ -591,6 +597,10 @@ export default function BookingPage() {
   useEffect(() => {
     if (!currentServices.length) {
       setSelectedServiceId("");
+      setSelectedDate("");
+      setSelectedSlot("");
+      setQuantity(1);
+      setMovieName("");
       return;
     }
 
@@ -602,6 +612,7 @@ export default function BookingPage() {
       const firstService = currentServices[0];
 
       setSelectedServiceId(firstService.id);
+      setSelectedDate("");
       setQuantity(getMinimumQuantity(firstService));
       setSelectedSlot("");
       setMovieName("");
@@ -650,6 +661,8 @@ export default function BookingPage() {
 
         const data = await response.json();
 
+        if (controller.signal.aborted) return;
+
         if (!response.ok || !data?.success) {
           throw new Error(
             data?.error ||
@@ -658,11 +671,18 @@ export default function BookingPage() {
           );
         }
 
+        if (controller.signal.aborted) return;
+
         setAvailabilitySlots(
           Array.isArray(data.slots) ? data.slots : []
         );
       } catch (error) {
-        if (error.name === "AbortError") return;
+        if (
+          error.name === "AbortError" ||
+          controller.signal.aborted
+        ) {
+          return;
+        }
 
         setAvailabilityError(
           error?.message || "Failed to load availability."
@@ -768,14 +788,20 @@ export default function BookingPage() {
 
   /* NAVIGATION */
 
-  function scrollToSection(ref) {
-    window.setTimeout(() => {
+  const scrollToSection = useCallback((ref) => {
+    if (!ref?.current) return;
+
+    window.requestAnimationFrame(() => {
       ref.current?.scrollIntoView({
-        behavior: "smooth",
+        behavior: window.matchMedia(
+          "(prefers-reduced-motion: reduce)"
+        ).matches
+          ? "auto"
+          : "smooth",
         block: "start",
       });
-    }, 100);
-  }
+    });
+  }, []);
 
   function handleAddMore() {
     setCartOpen(false);
@@ -796,13 +822,10 @@ export default function BookingPage() {
     scrollToSection(serviceRef);
   }
 
-  /*
-   * Memberships and day passes both scroll to the rules section.
-   * The same ref is used because the displayed rules section changes
-   * according to the selected service.
-   */
   function handleServiceChange(id) {
     const service = currentServices.find((item) => item.id === id);
+
+    if (!service) return;
 
     const membership = isMembershipService(service);
     const dayPass = isUntimedDayPass(service);
@@ -822,14 +845,18 @@ export default function BookingPage() {
   }
 
   function handleDateChange(value) {
+    const parsed = parseDateValue(value);
+
+    if (!parsed || value < getDhakaDateTime().date) return;
+
     setSelectedDate(value);
     setSelectedSlot("");
-
-    const dateOnly = isUntimedDayPass(selectedService);
+    setSubmitError("");
 
     scrollToSection(
-      isMembershipService(selectedService) || dateOnly
-        ? quantityRef
+      isMembershipService(selectedService) ||
+        isUntimedDayPass(selectedService)
+        ? customerDetailsRef
         : timeRef
     );
   }
@@ -844,18 +871,12 @@ export default function BookingPage() {
     const year = targetMonth.getFullYear();
     const month = targetMonth.getMonth();
     const value = formatDateValue(year, month, day);
-    const clickedDate = new Date(year, month, day);
 
-    const todayStart = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate()
-    );
-
-    if (clickedDate < todayStart) return;
+    if (value < getDhakaDateTime().date) return;
 
     setSelectedDate(value);
     setSelectedSlot("");
+    setSubmitError("");
 
     if (monthOffset !== 0) {
       setCalendarYear(year);
@@ -865,12 +886,14 @@ export default function BookingPage() {
     scrollToSection(
       isMembershipService(selectedService) ||
         isUntimedDayPass(selectedService)
-        ? quantityRef
+        ? customerDetailsRef
         : timeRef
     );
   }
 
   function goToPreviousMonth() {
+    if (isPreviousMonthDisabled) return;
+
     if (calendarMonth === 0) {
       setCalendarMonth(11);
       setCalendarYear((year) => year - 1);
@@ -889,10 +912,10 @@ export default function BookingPage() {
   }
 
   function goToCurrentMonth() {
-    const current = new Date();
+    const { date } = getDhakaDateTime();
 
-    setCalendarYear(current.getFullYear());
-    setCalendarMonth(current.getMonth());
+    setCalendarYear(Number(date.slice(0, 4)));
+    setCalendarMonth(Number(date.slice(5, 7)) - 1);
   }
 
   function handleSlotChange(slot) {
@@ -912,7 +935,10 @@ export default function BookingPage() {
     }
 
     setSelectedSlot(slot.startTime || "");
-    scrollToSection(quantityRef);
+    setSubmitError("");
+
+    // The details section is scrolled into view after the slot is selected.
+    scrollToSection(customerDetailsRef);
   }
 
   function increaseQuantity() {
@@ -953,10 +979,6 @@ export default function BookingPage() {
         )
       : null;
 
-    /*
-     * Day passes intentionally have no selected start/end time.
-     * Membership keeps its existing opening-hours representation.
-     */
     const startTime = isMembership
       ? OPEN_TIME
       : isDayPass
@@ -1183,7 +1205,10 @@ export default function BookingPage() {
       <section className="px-4 pb-24 sm:px-6">
         <div className="mx-auto max-w-7xl">
           {facilityError && (
-            <div className="mb-6 rounded-2xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-sm text-red-300">
+            <div
+              role="alert"
+              className="mb-6 rounded-2xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-sm text-red-300"
+            >
               {facilityError}
             </div>
           )}
@@ -1228,6 +1253,7 @@ export default function BookingPage() {
                           alt={item.title}
                           loading="lazy"
                           decoding="async"
+                          fetchPriority="low"
                           className="absolute inset-0 h-full w-full object-cover opacity-90 transition duration-500 group-hover:scale-105 group-hover:opacity-85"
                         />
 
@@ -1315,8 +1341,8 @@ export default function BookingPage() {
                             active={selectedServiceId === service.id}
                             startTime={
                               selectedServiceId === service.id
-                                  ? selectedSlot
-                                  : ""
+                                ? selectedSlot
+                                : ""
                             }
                             onClick={() =>
                               handleServiceChange(service.id)
@@ -1446,8 +1472,9 @@ export default function BookingPage() {
                     <button
                       type="button"
                       onClick={goToPreviousMonth}
+                      disabled={isPreviousMonthDisabled}
                       aria-label="Previous month"
-                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/50 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/50 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
                     >
                       <FiChevronLeft size={18} />
                     </button>
@@ -1500,26 +1527,15 @@ export default function BookingPage() {
                       const targetYear = targetDate.getFullYear();
                       const targetMonth = targetDate.getMonth();
 
-                      const selected = isSameDate(
-                        selectedDate,
+                      const value = formatDateValue(
                         targetYear,
                         targetMonth,
                         calendarDay.day
                       );
 
-                      const todayDate = isToday(
-                        targetYear,
-                        targetMonth,
-                        calendarDay.day
-                      );
-
-                      const todayStart = new Date(
-                        today.getFullYear(),
-                        today.getMonth(),
-                        today.getDate()
-                      );
-
-                      const isPast = targetDate < todayStart;
+                      const selected = selectedDate === value;
+                      const todayDate = dhakaNow.date === value;
+                      const isPast = value < dhakaNow.date;
                       const outsideMonth = calendarDay.monthOffset !== 0;
 
                       return (
@@ -1533,6 +1549,16 @@ export default function BookingPage() {
                               calendarDay.monthOffset
                             )
                           }
+                          aria-pressed={selected}
+                          aria-label={targetDate.toLocaleDateString(
+                            "en-US",
+                            {
+                              weekday: "long",
+                              year: "numeric",
+                              month: "long",
+                              day: "numeric",
+                            }
+                          )}
                           className={`relative mx-auto flex h-10 w-10 items-center justify-center rounded-xl text-sm transition sm:h-11 sm:w-11 ${
                             selected
                               ? "bg-blue-600 font-semibold text-white"
@@ -1569,21 +1595,29 @@ export default function BookingPage() {
 
                     <p className="mt-1 truncate text-sm font-medium">
                       {selectedDate
-                        ? new Date(
-                            `${selectedDate}T00:00:00`
-                          ).toLocaleDateString("en-US", {
-                            weekday: "long",
-                            year: "numeric",
-                            month: "long",
-                            day: "numeric",
-                          })
+                        ? (() => {
+                            const parsed = parseDateValue(selectedDate);
+
+                            return parsed
+                              ? new Date(
+                                  parsed.year,
+                                  parsed.month,
+                                  parsed.day
+                                ).toLocaleDateString("en-US", {
+                                  weekday: "long",
+                                  year: "numeric",
+                                  month: "long",
+                                  day: "numeric",
+                                })
+                              : "Choose a date from the calendar";
+                          })()
                         : "Choose a date from the calendar"}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* TIME: ONLY FOR SLOT-BASED SERVICES */}
+              {/* TIME */}
 
               {needsTimeSlot && (
                 <div
@@ -1603,7 +1637,10 @@ export default function BookingPage() {
                   </div>
 
                   {availabilityError && selectedDate && (
-                    <div className="mb-4 rounded-2xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-300">
+                    <div
+                      role="alert"
+                      className="mb-4 rounded-2xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-300"
+                    >
                       {availabilityError}
                     </div>
                   )}
@@ -1619,7 +1656,10 @@ export default function BookingPage() {
                       </p>
                     </div>
                   ) : loadingAvailability ? (
-                    <div className="rounded-2xl border border-white/10 bg-[#030712] p-8 text-center">
+                    <div
+                      className="rounded-2xl border border-white/10 bg-[#030712] p-8 text-center"
+                      aria-live="polite"
+                    >
                       <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-blue-500" />
                       <p className="mt-4 text-sm text-white/40">
                         Checking live availability...
@@ -1656,6 +1696,7 @@ export default function BookingPage() {
                             type="button"
                             disabled={full}
                             onClick={() => handleSlotChange(slot)}
+                            aria-pressed={active}
                             className={`rounded-2xl border p-4 text-left transition ${
                               full
                                 ? "cursor-not-allowed border-white/5 bg-white/[0.02] opacity-45"
@@ -1769,6 +1810,7 @@ export default function BookingPage() {
                     type="text"
                     maxLength={200}
                     placeholder="Enter movie name"
+                    aria-label="Movie name"
                     className="h-14 w-full rounded-2xl border border-white/10 bg-[#030712] px-4 text-sm text-white outline-none placeholder:text-white/20 transition focus:border-blue-500/60"
                   />
 
@@ -1779,9 +1821,12 @@ export default function BookingPage() {
                 </div>
               )}
 
-              {/* CUSTOMER DETAILS — MOVED HERE */}
+              {/* CUSTOMER DETAILS */}
 
-              <div className="mt-6 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:p-7">
+              <div
+                ref={customerDetailsRef}
+                className="mt-6 scroll-mt-28 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:scroll-mt-32 sm:p-7"
+              >
                 <div className="mb-6">
                   <h2 className="text-2xl font-semibold uppercase tracking-[0.2em] text-blue-400">
                     YOUR DETAILS
@@ -1873,12 +1918,16 @@ export default function BookingPage() {
                       type="button"
                       onClick={decreaseQuantity}
                       disabled={quantity <= minimumQuantity}
+                      aria-label="Decrease quantity"
                       className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
                     >
                       <FiMinus size={17} />
                     </button>
 
-                    <span className="flex h-12 min-w-16 items-center justify-center rounded-xl border border-white/10 bg-[#030712] px-4 text-lg font-semibold">
+                    <span
+                      className="flex h-12 min-w-16 items-center justify-center rounded-xl border border-white/10 bg-[#030712] px-4 text-lg font-semibold"
+                      aria-live="polite"
+                    >
                       {quantity}
                     </span>
 
@@ -1889,6 +1938,7 @@ export default function BookingPage() {
                         maximumQuantity !== null &&
                         quantity >= maximumQuantity
                       }
+                      aria-label="Increase quantity"
                       className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
                     >
                       <FiPlus size={17} />
@@ -1963,7 +2013,10 @@ export default function BookingPage() {
               </div>
 
               {submitError && (
-                <div className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-sm leading-6 text-red-300">
+                <div
+                  role="alert"
+                  className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-sm leading-6 text-red-300"
+                >
                   {submitError}
                 </div>
               )}
@@ -1993,6 +2046,7 @@ export default function BookingPage() {
       <button
         type="button"
         onClick={() => setCartOpen(true)}
+        aria-label={`Open booking cart, ${cartCount} items, total ${formatPrice(cartTotal)}`}
         className="fixed bottom-5 left-4 right-4 z-40 flex h-14 items-center justify-between rounded-2xl border border-blue-400/20 bg-[#07101c]/95 px-5 shadow-2xl backdrop-blur-xl lg:hidden"
       >
         <span className="flex items-center gap-3">
@@ -2013,7 +2067,12 @@ export default function BookingPage() {
       {/* MOBILE CART */}
 
       {cartOpen && (
-        <div className="fixed inset-0 z-[60] lg:hidden">
+        <div
+          className="fixed inset-0 z-[60] lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Booking summary"
+        >
           <button
             type="button"
             aria-label="Close cart"
@@ -2069,9 +2128,17 @@ function CustomerInput({
   autoComplete,
   onChange,
 }) {
+  const inputId = useMemo(
+    () => `customer-${label.toLowerCase().replace(/\s+/g, "-")}`,
+    [label]
+  );
+
   return (
     <div>
-      <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/35">
+      <label
+        htmlFor={inputId}
+        className="mb-2 block text-xs font-medium uppercase tracking-wider text-white/35"
+      >
         {label}
       </label>
 
@@ -2081,6 +2148,7 @@ function CustomerInput({
         </span>
 
         <input
+          id={inputId}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
@@ -2322,6 +2390,7 @@ function CartContent({
                   <button
                     type="button"
                     onClick={() => onRemove(item.id)}
+                    aria-label={`Remove ${item.title} from booking`}
                     className="shrink-0 text-xs text-white/25 transition hover:text-red-400"
                   >
                     Remove
