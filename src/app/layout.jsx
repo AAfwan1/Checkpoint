@@ -4,6 +4,7 @@ import Navbar from "@/components/layout/Navbar";
 import "./globals.css";
 import { usePathname } from "next/navigation";
 import Footer from "@/components/layout/Footer";
+import { GoogleAnalytics } from "@next/third-parties/google";
 
 export default function RootLayout({ children }) {
   const pathname = usePathname();
@@ -127,7 +128,7 @@ export default function RootLayout({ children }) {
         {!isAdmin && <Navbar />}
 
         <main>{children}</main>
-
+        <GoogleAnalytics gaId="G-0KV88SBB9Y" />
         {!isAdmin && !isBooking && <Footer />}
       </body>
     </html>
