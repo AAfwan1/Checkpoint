@@ -21,10 +21,7 @@ export function checkRateLimit(
     return {
       allowed: false,
       response: Response.json(
-        {
-          success: false,
-          message: "Too many requests. Try again later.",
-        },
+        { success: false, message: "Too many requests. Try again later." },
         {
           status: 429,
           headers: {

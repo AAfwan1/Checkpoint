@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import { verifyAdminToken } from "@/lib/adminAuth";
 
@@ -11,21 +12,26 @@ const MODERATOR_RESTRICTED_PATHS = [
 
 function isRestrictedForModerator(pathname) {
   return MODERATOR_RESTRICTED_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`)
+    (path) =>
+      pathname === path || pathname.startsWith(`${path}/`)
   );
 }
 
 export function proxy(request) {
   const token = request.cookies.get("admin_session")?.value;
 
-  // No login cookie: redirect to the login page.
   if (!token) {
     return NextResponse.redirect(new URL(LOGIN, request.url));
   }
 
-  const admin = verifyAdminToken(token);
+  let admin;
 
-  // Invalid token or unauthorized role: show 404.
+  try {
+    admin = verifyAdminToken(token);
+  } catch {
+    admin = null;
+  }
+
   if (!admin?.adminId || admin.role !== "admin") {
     const response = NextResponse.rewrite(
       new URL(NOT_FOUND, request.url)
@@ -35,12 +41,10 @@ export function proxy(request) {
     return response;
   }
 
-  // Main admin can access every admin page.
   if (admin.adminLevel === "main") {
     return NextResponse.next();
   }
 
-  // Moderators cannot access restricted pages.
   if (
     admin.adminLevel === "moderator" &&
     !isRestrictedForModerator(request.nextUrl.pathname)

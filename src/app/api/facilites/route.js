@@ -1,6 +1,5 @@
 
 import { NextResponse } from "next/server";
-
 import { connectDB } from "@/lib/mongodb";
 import Facility from "@/models/facility";
 
@@ -241,74 +240,61 @@ function createSchedule(slotDurationMinutes) {
   }));
 }
 
-function createMovieSchedule() {
-  const sessions = [
-    ["11:00", "14:00"],
-    ["14:00", "17:00"],
-    ["17:00", "20:00"],
-    ["20:00", "23:00"],
-  ];
-
-  return Array.from({ length: 7 }, (_, dayOfWeek) =>
-    sessions.map(([startTime, endTime]) => ({
-      dayOfWeek,
-      startTime,
-      endTime,
-      slotDurationMinutes: 180,
-      active: true,
-    }))
-  ).flat();
-}
-
-function getSchedules(facility) {
-  if (facility.slug === "steam-bath") {
-    return createSchedule(30);
+function getSchedules({ slug }) {
+  if (slug === "private-movie") {
+    return Array.from({ length: 7 }, (_, dayOfWeek) =>
+      [
+        ["11:00", "14:00"],
+        ["14:00", "17:00"],
+        ["17:00", "20:00"],
+        ["20:00", "23:00"],
+      ].map(([startTime, endTime]) => ({
+        dayOfWeek,
+        startTime,
+        endTime,
+        slotDurationMinutes: 180,
+        active: true,
+      }))
+    ).flat();
   }
 
-  if (facility.slug === "playground") {
-    return createSchedule(30);
-  }
-
-  if (facility.slug === "private-movie") {
-    return createMovieSchedule();
-  }
-
-  return createSchedule(60);
-}
-
-function addDiscountMetadata(facility) {
-  const result = { ...facility };
-
-  if (result.slug !== "playground" || !Array.isArray(result.services)) {
-    return result;
-  }
-
-  result.services = result.services.map((service) => ({
-    ...service,
-    offPeakDiscount: {
-      ...PLAYGROUND_DISCOUNT,
-      applies: true,
-    },
-  }));
-
-  return result;
+  return createSchedule(
+    slug === "steam-bath" || slug === "playground" ? 30 : 60
+  );
 }
 
 async function ensureFixedFacilities() {
-  for (const facilityData of FIXED_FACILITIES) {
-    const existing = await Facility.findOne({
-      slug: facilityData.slug,
-    });
+  const existing = await Facility.find({
+    slug: { $in: FIXED_FACILITIES.map(({ slug }) => slug) },
+  })
+    .select("slug")
+    .lean();
 
-    if (existing) {
-      continue;
-    }
+  const existingSlugs = new Set(existing.map(({ slug }) => slug));
 
-    await Facility.create({
-      ...facilityData,
-      schedules: getSchedules(facilityData),
-    });
+  await Promise.all(
+    FIXED_FACILITIES.filter(({ slug }) => !existingSlugs.has(slug)).map(
+      (facility) =>
+        Facility.create({
+          ...facility,
+          schedules: getSchedules(facility),
+        })
+    )
+  );
+}
+
+function addDiscountMetadata(facility) {
+  if (facility.slug !== "playground" || !Array.isArray(facility.services)) {
+    return facility;
   }
+
+  return {
+    ...facility,
+    services: facility.services.map((service) => ({
+      ...service,
+      offPeakDiscount: { ...PLAYGROUND_DISCOUNT, applies: true },
+    })),
+  };
 }
 
 export async function GET() {
@@ -328,10 +314,7 @@ export async function GET() {
     console.error("GET /api/admin/facilities error:", error);
 
     return NextResponse.json(
-      {
-        success: false,
-        message: "Failed to load facilities",
-      },
+      { success: false, message: "Failed to load facilities" },
       { status: 500 }
     );
   }

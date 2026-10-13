@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { z } from "zod";
@@ -6,97 +7,47 @@ import { connectDB } from "@/lib/mongodb";
 import Admin from "@/models/admin";
 import { requireAdmin } from "@/lib/requireAdmin";
 
-const updateSchema = z.object({
-  isActive: z.boolean(),
-});
+const updateSchema = z.object({ isActive: z.boolean() });
+
+const respond = (message, status) =>
+  NextResponse.json({ success: false, message }, { status });
 
 export async function PATCH(request, { params }) {
   try {
     const auth = await requireAdmin();
 
-    if (!auth.authenticated) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Unauthorized",
-        },
-        { status: 401 }
-      );
-    }
-
-    if (auth.admin.adminLevel !== "main") {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Forbidden",
-        },
-        { status: 403 }
-      );
-    }
+    if (!auth.authenticated) return respond("Unauthorized", 401);
+    if (auth.admin.adminLevel !== "main") return respond("Forbidden", 403);
 
     const { id } = await params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid admin ID",
-        },
-        { status: 400 }
-      );
+      return respond("Invalid admin ID", 400);
     }
 
-    const body = await request.json();
-
-    const result = updateSchema.safeParse(body);
-
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid input",
-        },
-        { status: 400 }
-      );
-    }
+    const result = updateSchema.safeParse(await request.json());
+    if (!result.success) return respond("Invalid input", 400);
 
     await connectDB();
 
-    const admin = await Admin.findById(id);
+    const admin = await Admin.findById(id)
+      .select("_id name email role adminLevel isActive");
 
-    if (!admin) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Admin not found",
-        },
-        { status: 404 }
-      );
-    }
+    if (!admin) return respond("Admin not found", 404);
 
-    // Main admin cannot be disabled
     if (
       admin.adminLevel === "main" &&
       admin._id.toString() === auth.admin._id.toString()
     ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "You cannot disable the main admin",
-        },
-        { status: 400 }
-      );
+      return respond("You cannot disable the main admin", 400);
     }
 
     admin.isActive = result.data.isActive;
-
     await admin.save();
 
     return NextResponse.json({
       success: true,
-      message: admin.isActive
-        ? "Admin enabled"
-        : "Admin disabled",
+      message: admin.isActive ? "Admin enabled" : "Admin disabled",
       admin: {
         _id: admin._id,
         name: admin.name,
@@ -108,13 +59,6 @@ export async function PATCH(request, { params }) {
     });
   } catch (error) {
     console.error("Update admin error:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Something went wrong",
-      },
-      { status: 500 }
-    );
+    return respond("Something went wrong", 500);
   }
 }

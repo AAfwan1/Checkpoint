@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -12,29 +13,22 @@ const createAdminSchema = z.object({
   password: z.string().min(8),
 });
 
+const respond = (message, status) =>
+  NextResponse.json({ success: false, message }, { status });
+
+async function authorizeMain() {
+  const auth = await requireAdmin();
+
+  if (!auth.authenticated) return respond("Unauthorized", 401);
+  if (auth.admin.adminLevel !== "main") return respond("Forbidden", 403);
+
+  return null;
+}
+
 export async function GET() {
   try {
-    const auth = await requireAdmin();
-
-    if (!auth.authenticated) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Unauthorized",
-        },
-        { status: 401 }
-      );
-    }
-
-    if (auth.admin.adminLevel !== "main") {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Forbidden",
-        },
-        { status: 403 }
-      );
-    }
+    const denied = await authorizeMain();
+    if (denied) return denied;
 
     await connectDB();
 
@@ -43,86 +37,36 @@ export async function GET() {
       .sort({ createdAt: -1 })
       .lean();
 
-    return NextResponse.json({
-      success: true,
-      admins,
-    });
+    return NextResponse.json({ success: true, admins });
   } catch (error) {
     console.error("Get admins error:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Something went wrong",
-      },
-      { status: 500 }
-    );
+    return respond("Something went wrong", 500);
   }
 }
 
 export async function POST(request) {
   try {
-    const auth = await requireAdmin();
+    const denied = await authorizeMain();
+    if (denied) return denied;
 
-    if (!auth.authenticated) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Unauthorized",
-        },
-        { status: 401 }
-      );
-    }
+    const result = createAdminSchema.safeParse(await request.json());
 
-    if (auth.admin.adminLevel !== "main") {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Forbidden",
-        },
-        { status: 403 }
-      );
-    }
+    if (!result.success) return respond("Invalid input", 400);
 
-    const body = await request.json();
-
-    const result = createAdminSchema.safeParse(body);
-
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid input",
-        },
-        { status: 400 }
-      );
-    }
-
-    const { name, email, password } = result.data;
+    const { name, password } = result.data;
+    const email = result.data.email.toLowerCase();
 
     await connectDB();
 
-    const normalizedEmail = email.toLowerCase();
-
-    const existingAdmin = await Admin.findOne({
-      email: normalizedEmail,
-    });
-
-    if (existingAdmin) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Admin already exists",
-        },
-        { status: 409 }
-      );
+    if (await Admin.exists({ email })) {
+      return respond("Admin already exists", 409);
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
 
     const admin = await Admin.create({
       name,
-      email: normalizedEmail,
+      email,
       passwordHash,
       role: "admin",
       adminLevel: "moderator",
@@ -146,13 +90,6 @@ export async function POST(request) {
     );
   } catch (error) {
     console.error("Create admin error:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Something went wrong",
-      },
-      { status: 500 }
-    );
+    return respond("Something went wrong", 500);
   }
 }

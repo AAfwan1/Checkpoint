@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 const PaymentSchema = new mongoose.Schema(
@@ -119,6 +120,7 @@ const PaymentSchema = new mongoose.Schema(
   }
 );
 
+// PAYMENT HISTORY INDEXES
 PaymentSchema.index({
   bookingGroupReference: 1,
   createdAt: -1,
@@ -134,9 +136,7 @@ PaymentSchema.index({
   createdAt: -1,
 });
 
-PaymentSchema.index({
-  gatewayTransactionId: 1,
-});
+// gatewayTransactionId index is defined in the field above.
 
 export default mongoose.models.Payment ||
   mongoose.model("Payment", PaymentSchema);

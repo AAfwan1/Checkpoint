@@ -1,11 +1,9 @@
+
 import mongoose from "mongoose";
 
 const BookingSchema = new mongoose.Schema(
   {
-    // ------------------------------------------------------------
     // BOOKING IDENTIFICATION
-    // ------------------------------------------------------------
-
     bookingReference: {
       type: String,
       required: true,
@@ -22,10 +20,7 @@ const BookingSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ------------------------------------------------------------
     // CUSTOMER
-    // ------------------------------------------------------------
-
     customerName: {
       type: String,
       required: true,
@@ -45,10 +40,7 @@ const BookingSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ------------------------------------------------------------
     // FACILITY / SERVICE
-    // ------------------------------------------------------------
-
     facilityId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Facility",
@@ -73,10 +65,7 @@ const BookingSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ------------------------------------------------------------
     // BOOKING TIME
-    // ------------------------------------------------------------
-
     bookingDate: {
       type: Date,
       required: true,
@@ -101,10 +90,7 @@ const BookingSchema = new mongoose.Schema(
       min: 1,
     },
 
-    // ------------------------------------------------------------
     // QUANTITY / PRICE
-    // ------------------------------------------------------------
-
     quantity: {
       type: Number,
       required: true,
@@ -123,20 +109,14 @@ const BookingSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // ------------------------------------------------------------
     // MOVIE
-    // ------------------------------------------------------------
-
     movieName: {
       type: String,
       default: "",
       trim: true,
     },
 
-    // ------------------------------------------------------------
     // BOOKING STATUS
-    // ------------------------------------------------------------
-
     status: {
       type: String,
       enum: [
@@ -149,10 +129,7 @@ const BookingSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ------------------------------------------------------------
     // PAYMENT STATUS
-    // ------------------------------------------------------------
-
     paymentStatus: {
       type: String,
       enum: [
@@ -208,33 +185,13 @@ const BookingSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ------------------------------------------------------------
     // PENDING BOOKING EXPIRATION
-    // ------------------------------------------------------------
-
-    /*
-     * IMPORTANT:
-     *
-     * MongoDB TTL automatically deletes this Booking document
-     * when expiresAt is reached.
-     *
-     * Pending booking:
-     *   expiresAt = creation time + 15 minutes
-     *
-     * Confirmed booking:
-     *   expiresAt = null
-     *
-     * Therefore confirmed bookings are NOT deleted by TTL.
-     */
     expiresAt: {
       type: Date,
       default: null,
     },
 
-    // ------------------------------------------------------------
     // CHECK-IN / CHECK-OUT
-    // ------------------------------------------------------------
-
     checkedIn: {
       type: Boolean,
       default: false,
@@ -255,10 +212,7 @@ const BookingSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ------------------------------------------------------------
     // CANCELLATION
-    // ------------------------------------------------------------
-
     cancelledAt: {
       type: Date,
       default: null,
@@ -275,10 +229,7 @@ const BookingSchema = new mongoose.Schema(
   }
 );
 
-// ------------------------------------------------------------
-// NORMAL INDEXES
-// ------------------------------------------------------------
-
+// FACILITY AVAILABILITY LOOKUPS
 BookingSchema.index({
   facilityId: 1,
   bookingDate: 1,
@@ -291,6 +242,7 @@ BookingSchema.index({
   status: 1,
 });
 
+// CUSTOMER BOOKING HISTORY
 BookingSchema.index({
   customerEmail: 1,
   bookingDate: -1,
@@ -301,6 +253,7 @@ BookingSchema.index({
   bookingDate: -1,
 });
 
+// STATUS AND PAYMENT QUERIES
 BookingSchema.index({
   status: 1,
   bookingDate: 1,
@@ -311,50 +264,19 @@ BookingSchema.index({
   createdAt: -1,
 });
 
+// BOOKING GROUP LOOKUPS
 BookingSchema.index({
   bookingGroupReference: 1,
   createdAt: 1,
 });
 
-BookingSchema.index({
-  paymentTransactionId: 1,
-});
-
-// ------------------------------------------------------------
-// TTL INDEX
-// ------------------------------------------------------------
-
-/*
- * MongoDB automatically removes the Booking document when
- * expiresAt is reached.
- *
- * expireAfterSeconds: 0 means:
- *
- *     delete when expiresAt <= current MongoDB time
- *
- * IMPORTANT:
- *
- * Only documents with a Date value in expiresAt are removed.
- *
- * Confirmed bookings have:
- *
- *     expiresAt: null
- *
- * so they are NOT removed.
- */
+// AUTOMATIC EXPIRATION OF EXPIRED BOOKINGS
 BookingSchema.index(
-  {
-    expiresAt: 1,
-  },
-  {
-    expireAfterSeconds: 0,
-  }
+  { expiresAt: 1 },
+  { expireAfterSeconds: 0 }
 );
 
-// ------------------------------------------------------------
-// STATUS / PAYMENT / EXPIRY QUERY INDEX
-// ------------------------------------------------------------
-
+// STATUS / PAYMENT / EXPIRATION QUERIES
 BookingSchema.index({
   expiresAt: 1,
   status: 1,

@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 
 import { connectDB } from "@/lib/mongodb";
@@ -8,7 +9,7 @@ import { requireAdmin } from "@/lib/requireAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ACTIVE_PAYMENT_STATUSES = [
+const PAYMENT_STATUSES = [
   "unpaid",
   "pending",
   "paid",
@@ -17,71 +18,41 @@ const ACTIVE_PAYMENT_STATUSES = [
 ];
 
 function jsonError(message, status = 400) {
-  return NextResponse.json(
-    {
-      success: false,
-      message,
-    },
-    { status }
-  );
+  return NextResponse.json({ success: false, message }, { status });
 }
 
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getDisplayStatus(booking) {
-  switch (booking.paymentStatus) {
+function formatDate(date) {
+  if (!date) return null;
+
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function getDisplayStatus(status) {
+  switch (status) {
     case "paid":
       return "Paid";
-
-    case "pending":
-    case "unpaid":
-      return "Pending";
-
     case "failed":
       return "Failed";
-
     case "refunded":
       return "Refunded";
-
+    case "pending":
+    case "unpaid":
     default:
       return "Pending";
   }
 }
 
 function getPaymentMethod(booking) {
-  if (booking.paymentMethod) {
-    return booking.paymentMethod;
-  }
-
-  if (booking.paymentCardType) {
-    return booking.paymentCardType;
-  }
-
-  return booking.paymentTransactionId
-    ? "SSLCommerz"
-    : "—";
-}
-
-function getTransactionType(booking, serviceType) {
-  if (serviceType === "membership") {
-    return "Membership";
-  }
-
-  return "Booking";
-}
-
-function formatBookingDate(date) {
-  if (!date) return null;
-
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed.toISOString();
+  return (
+    booking.paymentMethod ||
+    booking.paymentCardType ||
+    (booking.paymentTransactionId ? "SSLCommerz" : "—")
+  );
 }
 
 export async function GET(request) {
@@ -94,39 +65,47 @@ export async function GET(request) {
 
     await connectDB();
 
-    const { searchParams } = new URL(request.url);
-
-    const search = normalizeString(
-      searchParams.get("search")
-    ).toLowerCase();
-
-    const paymentStatus = normalizeString(
-      searchParams.get("status")
-    ).toLowerCase();
-
-    const type = normalizeString(
-      searchParams.get("type")
-    ).toLowerCase();
-
-    const method = normalizeString(
-      searchParams.get("method")
-    ).toLowerCase();
+    const params = new URL(request.url).searchParams;
+    const search = normalizeString(params.get("search")).toLowerCase();
+    const paymentStatus = normalizeString(params.get("status")).toLowerCase();
+    const type = normalizeString(params.get("type")).toLowerCase();
+    const method = normalizeString(params.get("method")).toLowerCase();
 
     const query = {};
 
-    if (
-      paymentStatus &&
-      ["unpaid", "pending", "paid", "failed", "refunded"].includes(
-        paymentStatus
-      )
-    ) {
+    if (PAYMENT_STATUSES.includes(paymentStatus)) {
       query.paymentStatus = paymentStatus;
     }
 
     const bookings = await Booking.find(query)
-      .sort({
-        createdAt: -1,
-      })
+      .select(
+        [
+          "bookingReference",
+          "bookingGroupReference",
+          "customerName",
+          "customerEmail",
+          "customerPhone",
+          "serviceName",
+          "facilityName",
+          "facilityId",
+          "serviceId",
+          "bookingDate",
+          "startTime",
+          "endTime",
+          "totalAmount",
+          "paymentMethod",
+          "paymentTransactionId",
+          "paymentStatus",
+          "status",
+          "paymentValidationId",
+          "paymentBankTransactionId",
+          "paymentCardType",
+          "paymentPaidAt",
+          "paymentInitiatedAt",
+          "createdAt",
+        ].join(" ")
+      )
+      .sort({ createdAt: -1 })
       .lean();
 
     const facilityIds = [
@@ -138,233 +117,119 @@ export async function GET(request) {
     ];
 
     const facilities = facilityIds.length
-      ? await Facility.find({
-          _id: {
-            $in: facilityIds,
-          },
-        })
-          .select("_id services")
+      ? await Facility.find({ _id: { $in: facilityIds } })
+          .select("_id services._id services.type")
           .lean()
       : [];
 
-    const facilityMap = new Map();
+    const serviceTypes = new Map();
 
     for (const facility of facilities) {
-      facilityMap.set(
-        facility._id.toString(),
-        facility
-      );
+      for (const service of facility.services || []) {
+        serviceTypes.set(
+          `${facility._id}:${service._id}`,
+          service.type
+        );
+      }
     }
 
-    const transactions = bookings
-      .map((booking) => {
-        const facility = facilityMap.get(
-          booking.facilityId?.toString()
-        );
-
-        const service = facility?.services?.find(
-          (item) =>
-            item._id?.toString() ===
-            booking.serviceId?.toString()
-        );
-
-        const transactionStatus =
-          getDisplayStatus(booking);
-
-        const transactionType =
-          getTransactionType(
-            booking,
-            service?.type
-          );
-
-        const transactionMethod =
-          getPaymentMethod(booking);
-
-        const paymentDate =
-          booking.paymentPaidAt ||
-          booking.paymentInitiatedAt ||
-          booking.createdAt;
-
-        const transaction = {
-          id: booking.bookingReference,
-
-          bookingId:
-            booking.bookingReference,
-
-          bookingGroupReference:
-            booking.bookingGroupReference,
-
-          customer: booking.customerName,
-
-          email: booking.customerEmail,
-
-          phone: booking.customerPhone,
-
-          service: booking.serviceName,
-
-          facility: booking.facilityName,
-
-          date: formatBookingDate(
-            booking.bookingDate
-          ),
-
-          time:
-            booking.startTime &&
-            booking.endTime
-              ? `${booking.startTime} - ${booking.endTime}`
-              : booking.startTime || "—",
-
-          amount: Number(
-            booking.totalAmount || 0
-          ),
-
-          method: transactionMethod,
-
-          gateway: booking.paymentTransactionId
-            ? "SSLCommerz"
-            : "—",
-
-          status: transactionStatus,
-
-          type: transactionType,
-
-          transactionId:
-            booking.paymentTransactionId || "—",
-
-          paymentDate:
-            formatBookingDate(paymentDate),
-
-          paymentStatus:
-            booking.paymentStatus,
-
-          bookingStatus:
-            booking.status,
-
-          paymentValidationId:
-            booking.paymentValidationId || "",
-
-          paymentBankTransactionId:
-            booking.paymentBankTransactionId || "",
-
-          paymentCardType:
-            booking.paymentCardType || "",
-
-          paymentPaidAt:
-            formatBookingDate(
-              booking.paymentPaidAt
-            ),
-
-          createdAt:
-            formatBookingDate(
-              booking.createdAt
-            ),
-        };
-
-        return transaction;
-      })
-      .filter((transaction) => {
-        const matchesSearch =
-          !search ||
-          transaction.id
-            .toLowerCase()
-            .includes(search) ||
-          transaction.bookingId
-            .toLowerCase()
-            .includes(search) ||
-          transaction.bookingGroupReference
-            .toLowerCase()
-            .includes(search) ||
-          transaction.customer
-            .toLowerCase()
-            .includes(search) ||
-          transaction.email
-            .toLowerCase()
-            .includes(search) ||
-          transaction.phone
-            .toLowerCase()
-            .includes(search) ||
-          transaction.service
-            .toLowerCase()
-            .includes(search) ||
-          transaction.transactionId
-            .toLowerCase()
-            .includes(search);
-
-        const matchesStatus =
-          !paymentStatus ||
-          transaction.paymentStatus ===
-            paymentStatus;
-
-        const matchesType =
-          !type ||
-          transaction.type.toLowerCase() ===
-            type;
-
-        const matchesMethod =
-          !method ||
-          transaction.method.toLowerCase() ===
-            method;
-
-        return (
-          matchesSearch &&
-          matchesStatus &&
-          matchesType &&
-          matchesMethod
-        );
-      });
+    const transactions = [];
 
     const summary = {
-      total: transactions.length,
-
-      paid: transactions.filter(
-        (transaction) =>
-          transaction.paymentStatus === "paid"
-      ).length,
-
-      paidAmount: transactions
-        .filter(
-          (transaction) =>
-            transaction.paymentStatus === "paid"
-        )
-        .reduce(
-          (sum, transaction) =>
-            sum + transaction.amount,
-          0
-        ),
-
-      pending: transactions.filter(
-        (transaction) =>
-          transaction.paymentStatus ===
-            "pending" ||
-          transaction.paymentStatus ===
-            "unpaid"
-      ).length,
-
-      pendingAmount: transactions
-        .filter(
-          (transaction) =>
-            transaction.paymentStatus ===
-              "pending" ||
-            transaction.paymentStatus ===
-              "unpaid"
-        )
-        .reduce(
-          (sum, transaction) =>
-            sum + transaction.amount,
-          0
-        ),
-
-      failed: transactions.filter(
-        (transaction) =>
-          transaction.paymentStatus === "failed"
-      ).length,
-
-      refunded: transactions.filter(
-        (transaction) =>
-          transaction.paymentStatus ===
-          "refunded"
-      ).length,
+      total: 0,
+      paid: 0,
+      paidAmount: 0,
+      pending: 0,
+      pendingAmount: 0,
+      failed: 0,
+      refunded: 0,
     };
+
+    for (const booking of bookings) {
+      const bookingReference = booking.bookingReference || "";
+      const groupReference = booking.bookingGroupReference || "";
+      const customer = booking.customerName || "";
+      const email = booking.customerEmail || "";
+      const phone = booking.customerPhone || "";
+      const serviceName = booking.serviceName || "";
+      const transactionId = booking.paymentTransactionId || "";
+      const status = booking.paymentStatus || "";
+      const amount = Number(booking.totalAmount || 0);
+
+      const serviceType = serviceTypes.get(
+        `${booking.facilityId}:${booking.serviceId}`
+      );
+
+      const transactionType =
+        serviceType === "membership" ? "Membership" : "Booking";
+
+      const transactionMethod = getPaymentMethod(booking);
+
+      const transaction = {
+        id: bookingReference,
+        bookingId: bookingReference,
+        bookingGroupReference: groupReference,
+        customer,
+        email,
+        phone,
+        service: serviceName,
+        facility: booking.facilityName || "",
+        date: formatDate(booking.bookingDate),
+        time:
+          booking.startTime && booking.endTime
+            ? `${booking.startTime} - ${booking.endTime}`
+            : booking.startTime || "—",
+        amount,
+        method: transactionMethod,
+        gateway: transactionId ? "SSLCommerz" : "—",
+        status: getDisplayStatus(status),
+        type: transactionType,
+        transactionId: transactionId || "—",
+        paymentDate: formatDate(
+          booking.paymentPaidAt ||
+            booking.paymentInitiatedAt ||
+            booking.createdAt
+        ),
+        paymentStatus: status,
+        bookingStatus: booking.status,
+        paymentValidationId: booking.paymentValidationId || "",
+        paymentBankTransactionId:
+          booking.paymentBankTransactionId || "",
+        paymentCardType: booking.paymentCardType || "",
+        paymentPaidAt: formatDate(booking.paymentPaidAt),
+        createdAt: formatDate(booking.createdAt),
+      };
+
+      const matchesSearch =
+        !search ||
+        bookingReference.toLowerCase().includes(search) ||
+        groupReference.toLowerCase().includes(search) ||
+        customer.toLowerCase().includes(search) ||
+        email.toLowerCase().includes(search) ||
+        phone.toLowerCase().includes(search) ||
+        serviceName.toLowerCase().includes(search) ||
+        transactionId.toLowerCase().includes(search);
+
+      if (!matchesSearch) continue;
+      if (type && transactionType.toLowerCase() !== type) continue;
+      if (method && transactionMethod.toLowerCase() !== method) continue;
+
+      transactions.push(transaction);
+
+      summary.total++;
+
+      if (status === "paid") {
+        summary.paid++;
+        summary.paidAmount += amount;
+      } else if (status === "pending" || status === "unpaid") {
+        summary.pending++;
+        summary.pendingAmount += amount;
+      } else if (status === "failed") {
+        summary.failed++;
+      } else if (status === "refunded") {
+        summary.refunded++;
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -373,14 +238,8 @@ export async function GET(request) {
       total: transactions.length,
     });
   } catch (error) {
-    console.error(
-      "GET /api/payment failed:",
-      error
-    );
+    console.error("GET /api/payment failed:", error);
 
-    return jsonError(
-      "Unable to load payment transactions.",
-      500
-    );
+    return jsonError("Unable to load payment transactions.", 500);
   }
 }

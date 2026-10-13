@@ -1,6 +1,7 @@
+
 import jwt from "jsonwebtoken";
 
-const getSecret = () => process.env.ADMIN_JWT_SECRET || null;
+const getSecret = () => process.env.ADMIN_JWT_SECRET;
 
 export function createAdminToken(admin) {
   const secret = getSecret();
@@ -16,10 +17,7 @@ export function createAdminToken(admin) {
       adminLevel: admin.adminLevel,
     },
     secret,
-    {
-      expiresIn: "1d",
-      algorithm: "HS256",
-    }
+    { expiresIn: "1d", algorithm: "HS256" }
   );
 }
 
@@ -29,9 +27,7 @@ export function verifyAdminToken(token) {
   if (!secret || !token) return null;
 
   try {
-    return jwt.verify(token, secret, {
-      algorithms: ["HS256"],
-    });
+    return jwt.verify(token, secret, { algorithms: ["HS256"] });
   } catch {
     return null;
   }

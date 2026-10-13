@@ -1,5 +1,4 @@
 import { cookies } from "next/headers";
-
 import { connectDB } from "@/lib/mongodb";
 import Admin from "@/models/admin";
 import { verifyAdminToken } from "@/lib/adminAuth";
@@ -19,13 +18,12 @@ export async function requireAdmin() {
       _id: payload.adminId,
       role: "admin",
       isActive: true,
-    }).select("_id name email role adminLevel isActive");
-    console.log("Admin:", admin?.email, "Level:", admin?.adminLevel);
-    return admin
-      ? { authenticated: true, admin }
-      : { authenticated: false, admin: null };
+    })
+      .select("_id name email role adminLevel isActive")
+      .lean();
+
+    return { authenticated: !!admin, admin: admin || null };
   } catch {
-    console.error("Admin authentication failed");
     return { authenticated: false, admin: null };
   }
 }

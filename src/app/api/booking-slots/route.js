@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const VALID_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const VALID_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const VALID_OBJECT_ID = /^[a-f\d]{24}$/i;
 
 const ACTIVE_BOOKING_STATUSES = ["pending", "confirmed"];
 
@@ -27,18 +28,15 @@ function errorResponse(message, status = 400) {
 }
 
 function successResponse(data, status = 200) {
-  return NextResponse.json(
-    { success: true, ...data },
-    { status }
-  );
+  return NextResponse.json({ success: true, ...data }, { status });
 }
 
-function parseDateOnly(dateString) {
-  if (typeof dateString !== "string" || !VALID_DATE.test(dateString)) {
+function parseDateOnly(value) {
+  if (typeof value !== "string" || !VALID_DATE.test(value)) {
     return null;
   }
 
-  const [year, month, day] = dateString.split("-").map(Number);
+  const [year, month, day] = value.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
 
   if (
@@ -52,22 +50,10 @@ function parseDateOnly(dateString) {
   return { year, month, day, date };
 }
 
-function getDayOfWeek(dateString) {
-  const parsed = parseDateOnly(dateString);
-  return parsed ? parsed.date.getUTCDay() : null;
-}
-
-function getDateRange(dateString) {
-  const parsed = parseDateOnly(dateString);
-  if (!parsed) return null;
-
+function getDateRange({ year, month, day }) {
   return {
-    start: new Date(
-      Date.UTC(parsed.year, parsed.month - 1, parsed.day)
-    ),
-    end: new Date(
-      Date.UTC(parsed.year, parsed.month - 1, parsed.day + 1)
-    ),
+    start: new Date(Date.UTC(year, month - 1, day)),
+    end: new Date(Date.UTC(year, month - 1, day + 1)),
   };
 }
 
@@ -80,12 +66,13 @@ function timeToMinutes(value) {
   return hours * 60 + minutes;
 }
 
-function minutesToTime(totalMinutes) {
-  const normalized = Math.max(0, Math.min(1439, totalMinutes));
+function minutesToTime(minutes) {
+  const normalized = Math.max(0, Math.min(1439, minutes));
   const hours = Math.floor(normalized / 60);
-  const minutes = normalized % 60;
 
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  return `${String(hours).padStart(2, "0")}:${String(
+    normalized % 60
+  ).padStart(2, "0")}`;
 }
 
 function overlaps(startA, endA, startB, endB) {
@@ -99,10 +86,6 @@ function isMembershipService(service) {
   );
 }
 
-/*
- * Only fitness day_pass services use unlimited date-only availability.
- * Monthly memberships retain their separate existing behavior.
- */
 function isUnlimitedFitnessDayPass(facility, service) {
   return (
     facility?.facilityType === "fitness" &&
@@ -125,41 +108,38 @@ function isPlaygroundFacility(facility) {
   );
 }
 
-function isSlotBasedService(service) {
-  return !isMembershipService(service);
-}
-
 function getBookingQuantity(booking) {
   const quantity = Number(booking?.quantity);
-
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    return 0;
-  }
-
-  return quantity;
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
 }
 
 async function getBookingsForDate(facilityId, dateRange) {
-  return Booking.find({
+  const bookings = await Booking.find({
     facilityId,
     bookingDate: {
       $gte: dateRange.start,
       $lt: dateRange.end,
     },
-    status: {
-      $in: ACTIVE_BOOKING_STATUSES,
-    },
+    status: { $in: ACTIVE_BOOKING_STATUSES },
   })
-    .select(
-      "_id serviceId serviceName startTime endTime durationMinutes quantity status paymentStatus movieName"
-    )
+    .select("_id serviceId serviceName startTime endTime quantity")
     .lean();
+
+  // Parse booking times once instead of once for every slot.
+  return bookings.map((booking) => ({
+    _id: booking._id,
+    serviceId: String(booking.serviceId),
+    serviceName: booking.serviceName,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+    startMinutes: timeToMinutes(booking.startTime),
+    endMinutes: timeToMinutes(booking.endTime),
+    quantity: getBookingQuantity(booking),
+  }));
 }
 
 function getSchedulesForDay(facility, dayOfWeek) {
-  if (!Array.isArray(facility.schedules)) {
-    return [];
-  }
+  if (!Array.isArray(facility.schedules)) return [];
 
   return facility.schedules.filter(
     (schedule) =>
@@ -188,54 +168,43 @@ function generateStartTimes(schedule) {
     return [];
   }
 
-  const result = [];
+  const times = [];
 
   for (let current = start; current < end; current += interval) {
-    result.push(minutesToTime(current));
+    times.push(minutesToTime(current));
   }
 
-  return result;
+  return times;
 }
 
-function generateStandardSlots(facility, service, dayOfWeek) {
-  const schedules = getSchedulesForDay(facility, dayOfWeek);
+function generateStandardSlots(schedules, service) {
+  const duration = Number(service.durationMinutes);
 
-  if (schedules.length === 0) return [];
-
-  const serviceDuration = Number(service.durationMinutes);
-
-  if (!Number.isFinite(serviceDuration) || serviceDuration <= 0) {
-    return [];
-  }
+  if (!Number.isFinite(duration) || duration <= 0) return [];
 
   const slots = [];
+  const seen = new Set();
 
   for (const schedule of schedules) {
     const scheduleEnd = timeToMinutes(schedule.endTime);
 
     for (const startTime of generateStartTimes(schedule)) {
-      const startMinutes = timeToMinutes(startTime);
+      const start = timeToMinutes(startTime);
+      if (start === null) continue;
 
-      if (startMinutes === null) continue;
+      const end = start + duration;
+      if (end > scheduleEnd) continue;
 
-      const endMinutes = startMinutes + serviceDuration;
+      const endTime = minutesToTime(end);
+      const key = `${startTime}|${endTime}`;
 
-      if (endMinutes > scheduleEnd) continue;
-
-      const endTime = minutesToTime(endMinutes);
-
-      const duplicate = slots.some(
-        (slot) =>
-          slot.startTime === startTime &&
-          slot.endTime === endTime
-      );
-
-      if (duplicate) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
 
       slots.push({
         startTime,
         endTime,
-        durationMinutes: serviceDuration,
+        durationMinutes: duration,
       });
     }
   }
@@ -246,37 +215,22 @@ function generateStandardSlots(facility, service, dayOfWeek) {
   );
 }
 
-function generateMovieSlots(facility, service, dayOfWeek) {
-  const schedules = getSchedulesForDay(facility, dayOfWeek);
+function generateMovieSlots(schedules) {
+  return MOVIE_SESSIONS.filter((session) => {
+    const start = timeToMinutes(session.startTime);
+    const end = timeToMinutes(session.endTime);
 
-  if (schedules.length === 0) return [];
-
-  const slots = [];
-
-  for (const session of MOVIE_SESSIONS) {
-    const sessionStart = timeToMinutes(session.startTime);
-    const sessionEnd = timeToMinutes(session.endTime);
-
-    const allowedBySchedule = schedules.some((schedule) => {
-      const scheduleStart = timeToMinutes(schedule.startTime);
-      const scheduleEnd = timeToMinutes(schedule.endTime);
-
-      return (
-        scheduleStart <= sessionStart &&
-        scheduleEnd >= sessionEnd
-      );
-    });
-
-    if (!allowedBySchedule) continue;
-
-    slots.push({
-      startTime: session.startTime,
-      endTime: session.endTime,
-      durationMinutes: sessionEnd - sessionStart,
-    });
-  }
-
-  return slots;
+    return schedules.some(
+      (schedule) =>
+        timeToMinutes(schedule.startTime) <= start &&
+        timeToMinutes(schedule.endTime) >= end
+    );
+  }).map((session) => ({
+    ...session,
+    durationMinutes:
+      timeToMinutes(session.endTime) -
+      timeToMinutes(session.startTime),
+  }));
 }
 
 function calculateCapacityAvailability({ service, slot, bookings }) {
@@ -291,37 +245,27 @@ function calculateCapacityAvailability({ service, slot, bookings }) {
     };
   }
 
-  const relevantBookings = bookings.filter((booking) => {
-    if (String(booking.serviceId) !== String(service._id)) {
-      return false;
-    }
+  const slotStart = timeToMinutes(slot.startTime);
+  const slotEnd = timeToMinutes(slot.endTime);
+  const serviceId = String(service._id);
 
-    const bookingStart = timeToMinutes(booking.startTime);
-    const bookingEnd = timeToMinutes(booking.endTime);
-    const slotStart = timeToMinutes(slot.startTime);
-    const slotEnd = timeToMinutes(slot.endTime);
+  let booked = 0;
 
+  for (const booking of bookings) {
     if (
-      bookingStart === null ||
-      bookingEnd === null ||
-      slotStart === null ||
-      slotEnd === null
+      booking.serviceId === serviceId &&
+      booking.startMinutes !== null &&
+      booking.endMinutes !== null &&
+      overlaps(
+        slotStart,
+        slotEnd,
+        booking.startMinutes,
+        booking.endMinutes
+      )
     ) {
-      return false;
+      booked += booking.quantity;
     }
-
-    return overlaps(
-      slotStart,
-      slotEnd,
-      bookingStart,
-      bookingEnd
-    );
-  });
-
-  const booked = relevantBookings.reduce(
-    (sum, booking) => sum + getBookingQuantity(booking),
-    0
-  );
+  }
 
   const remaining = Math.max(0, capacity - booked);
 
@@ -334,29 +278,15 @@ function calculateCapacityAvailability({ service, slot, bookings }) {
 }
 
 function calculateExclusiveAvailability({ slot, bookings }) {
-  const slotStart = timeToMinutes(slot.startTime);
-  const slotEnd = timeToMinutes(slot.endTime);
+  const start = timeToMinutes(slot.startTime);
+  const end = timeToMinutes(slot.endTime);
 
-  const occupied = bookings.some((booking) => {
-    const bookingStart = timeToMinutes(booking.startTime);
-    const bookingEnd = timeToMinutes(booking.endTime);
-
-    if (
-      bookingStart === null ||
-      bookingEnd === null ||
-      slotStart === null ||
-      slotEnd === null
-    ) {
-      return false;
-    }
-
-    return overlaps(
-      slotStart,
-      slotEnd,
-      bookingStart,
-      bookingEnd
-    );
-  });
+  const occupied = bookings.some(
+    (booking) =>
+      booking.startMinutes !== null &&
+      booking.endMinutes !== null &&
+      overlaps(start, end, booking.startMinutes, booking.endMinutes)
+  );
 
   return {
     capacity: 1,
@@ -367,29 +297,15 @@ function calculateExclusiveAvailability({ slot, bookings }) {
 }
 
 function calculatePlaygroundAvailability({ slot, bookings }) {
-  const slotStart = timeToMinutes(slot.startTime);
-  const slotEnd = timeToMinutes(slot.endTime);
+  const start = timeToMinutes(slot.startTime);
+  const end = timeToMinutes(slot.endTime);
 
-  const occupiedBooking = bookings.find((booking) => {
-    const bookingStart = timeToMinutes(booking.startTime);
-    const bookingEnd = timeToMinutes(booking.endTime);
-
-    if (
-      bookingStart === null ||
-      bookingEnd === null ||
-      slotStart === null ||
-      slotEnd === null
-    ) {
-      return false;
-    }
-
-    return overlaps(
-      slotStart,
-      slotEnd,
-      bookingStart,
-      bookingEnd
-    );
-  });
+  const occupiedBooking = bookings.find(
+    (booking) =>
+      booking.startMinutes !== null &&
+      booking.endMinutes !== null &&
+      overlaps(start, end, booking.startMinutes, booking.endMinutes)
+  );
 
   return {
     capacity: 1,
@@ -408,37 +324,24 @@ function calculatePlaygroundAvailability({ slot, bookings }) {
 }
 
 function calculateMovieAvailability({ service, slot, bookings }) {
+  const configuredCapacity = Number(service.capacity);
   const capacity =
-    Number(service.capacity) > 0 ? Number(service.capacity) : 50;
+    configuredCapacity > 0 ? configuredCapacity : 50;
 
-  const slotStart = timeToMinutes(slot.startTime);
-  const slotEnd = timeToMinutes(slot.endTime);
+  const start = timeToMinutes(slot.startTime);
+  const end = timeToMinutes(slot.endTime);
 
-  const relevantBookings = bookings.filter((booking) => {
-    const bookingStart = timeToMinutes(booking.startTime);
-    const bookingEnd = timeToMinutes(booking.endTime);
+  let booked = 0;
 
+  for (const booking of bookings) {
     if (
-      bookingStart === null ||
-      bookingEnd === null ||
-      slotStart === null ||
-      slotEnd === null
+      booking.startMinutes !== null &&
+      booking.endMinutes !== null &&
+      overlaps(start, end, booking.startMinutes, booking.endMinutes)
     ) {
-      return false;
+      booked += booking.quantity;
     }
-
-    return overlaps(
-      slotStart,
-      slotEnd,
-      bookingStart,
-      bookingEnd
-    );
-  });
-
-  const booked = relevantBookings.reduce(
-    (sum, booking) => sum + getBookingQuantity(booking),
-    0
-  );
+  }
 
   const remaining = Math.max(0, capacity - booked);
 
@@ -450,44 +353,24 @@ function calculateMovieAvailability({ service, slot, bookings }) {
   };
 }
 
-function calculateSlotAvailability({
-  facility,
-  service,
-  slot,
-  bookings,
-}) {
+function calculateSlotAvailability({ facility, service, slot, bookings }) {
   if (isMovieFacility(facility)) {
-    return calculateMovieAvailability({
-      service,
-      slot,
-      bookings,
-    });
+    return calculateMovieAvailability({ service, slot, bookings });
   }
 
   if (isPlaygroundFacility(facility)) {
-    return calculatePlaygroundAvailability({
-      slot,
-      bookings,
-    });
+    return calculatePlaygroundAvailability({ slot, bookings });
   }
 
   if (service.exclusive === true) {
-    return calculateExclusiveAvailability({
-      slot,
-      bookings,
-    });
+    return calculateExclusiveAvailability({ slot, bookings });
   }
 
-  return calculateCapacityAvailability({
-    service,
-    slot,
-    bookings,
-  });
+  return calculateCapacityAvailability({ service, slot, bookings });
 }
 
 function buildSlotResponse({ service, slot, availability }) {
-  const capacity =
-    availability.capacity === null ? null : availability.capacity;
+  const capacity = availability.capacity;
 
   return {
     startTime: slot.startTime,
@@ -514,24 +397,24 @@ function buildSlotResponse({ service, slot, availability }) {
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-
     const facilityId = searchParams.get("facilityId")?.trim();
     const serviceId = searchParams.get("serviceId")?.trim();
     const date = searchParams.get("date")?.trim();
 
-    if (!facilityId) {
-      return errorResponse("facilityId is required.");
+    if (!facilityId) return errorResponse("facilityId is required.");
+    if (!serviceId) return errorResponse("serviceId is required.");
+    if (!date) return errorResponse("date is required.");
+
+    if (!VALID_OBJECT_ID.test(facilityId)) {
+      return errorResponse("Invalid facilityId.");
     }
 
-    if (!serviceId) {
-      return errorResponse("serviceId is required.");
+    if (!VALID_OBJECT_ID.test(serviceId)) {
+      return errorResponse("Invalid serviceId.");
     }
 
-    if (!date) {
-      return errorResponse("date is required.");
-    }
-
-    if (!parseDateOnly(date)) {
+    const parsedDate = parseDateOnly(date);
+    if (!parsedDate) {
       return errorResponse("Invalid date. Use YYYY-MM-DD.");
     }
 
@@ -549,7 +432,7 @@ export async function GET(request) {
     const service = Array.isArray(facility.services)
       ? facility.services.find(
           (item) =>
-            String(item._id) === String(serviceId) &&
+            String(item._id) === serviceId &&
             item.active !== false
         )
       : null;
@@ -592,9 +475,6 @@ export async function GET(request) {
       exclusive: Boolean(service.exclusive),
     };
 
-    /*
-     * Memberships keep their existing date-only behavior.
-     */
     if (isMembershipService(service)) {
       return successResponse({
         facility: facilityResponse,
@@ -606,13 +486,6 @@ export async function GET(request) {
       });
     }
 
-    /*
-     * Unlimited fitness day passes:
-     * Gym Day Pass, Swimming Pool Day Pass, Gym + Pool Combo Day Pass.
-     *
-     * Return before schedule checks and booking queries.
-     * No time slots, capacity checks, or daily booking limits.
-     */
     if (isUnlimitedFitnessDayPass(facility, service)) {
       return successResponse({
         facility: facilityResponse,
@@ -634,12 +507,7 @@ export async function GET(request) {
       });
     }
 
-    const dayOfWeek = getDayOfWeek(date);
-
-    if (dayOfWeek === null) {
-      return errorResponse("Unable to determine day of week.");
-    }
-
+    const dayOfWeek = parsedDate.date.getUTCDay();
     const schedules = getSchedulesForDay(facility, dayOfWeek);
 
     if (schedules.length === 0) {
@@ -656,42 +524,34 @@ export async function GET(request) {
     }
 
     const slots = isMovieFacility(facility)
-      ? generateMovieSlots(facility, service, dayOfWeek)
-      : generateStandardSlots(facility, service, dayOfWeek);
-
-    const dateRange = getDateRange(date);
-
-    if (!dateRange) {
-      return errorResponse("Unable to create date range.");
-    }
+      ? generateMovieSlots(schedules)
+      : generateStandardSlots(schedules, service);
 
     const bookings = await getBookingsForDate(
       facility._id,
-      dateRange
+      getDateRange(parsedDate)
     );
 
-    const responseSlots = slots.map((slot) => {
-      const availability = calculateSlotAvailability({
-        facility,
+    const responseSlots = slots.map((slot) =>
+      buildSlotResponse({
         service,
         slot,
-        bookings,
-      });
+        availability: calculateSlotAvailability({
+          facility,
+          service,
+          slot,
+          bookings,
+        }),
+      })
+    );
 
-      return buildSlotResponse({
-        service,
-        slot,
-        availability,
-      });
-    });
+    let availableSlots = 0;
+
+    for (const slot of responseSlots) {
+      if (slot.available) availableSlots++;
+    }
 
     const totalSlots = responseSlots.length;
-    const availableSlots = responseSlots.filter(
-      (slot) => slot.available
-    ).length;
-    const fullSlots = responseSlots.filter(
-      (slot) => !slot.available
-    ).length;
 
     return successResponse({
       facility: facilityResponse,
@@ -703,16 +563,14 @@ export async function GET(request) {
         dayOfWeek: Number(schedule.dayOfWeek),
         startTime: schedule.startTime,
         endTime: schedule.endTime,
-        slotDurationMinutes: Number(
-          schedule.slotDurationMinutes
-        ),
+        slotDurationMinutes: Number(schedule.slotDurationMinutes),
         active: schedule.active !== false,
       })),
-      slotBased: isSlotBasedService(service),
+      slotBased: !isMembershipService(service),
       summary: {
         totalSlots,
         availableSlots,
-        fullSlots,
+        fullSlots: totalSlots - availableSlots,
         activeBookingsCount: bookings.length,
       },
       slots: responseSlots,
@@ -720,9 +578,6 @@ export async function GET(request) {
   } catch (error) {
     console.error("GET /api/booking-slots error:", error);
 
-    return errorResponse(
-      "Unable to load booking availability.",
-      500
-    );
+    return errorResponse("Unable to load booking availability.", 500);
   }
 }

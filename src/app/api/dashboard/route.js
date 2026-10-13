@@ -13,98 +13,66 @@ const TIME_ZONE = "Asia/Dhaka";
 const UPCOMING_LIMIT = 10;
 const ACTIVE_STATUSES = ["pending", "confirmed"];
 
-function jsonError(message, status = 500) {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status }
-  );
-}
+const jsonError = (message, status = 500) =>
+  NextResponse.json({ success: false, error: message }, { status });
 
-function getDhakaDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-
+function getDhakaDateParts(date) {
   return Object.fromEntries(
-    parts.map(({ type, value }) => [type, value])
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .map(({ type, value }) => [type, value])
   );
 }
 
 function getDateRange(dateString, days = 1) {
   const start = new Date(`${dateString}T00:00:00.000Z`);
   const end = new Date(start);
-
   end.setUTCDate(end.getUTCDate() + days);
-
   return { $gte: start, $lt: end };
 }
 
-function addDays(dateString, days) {
-  const date = new Date(`${dateString}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function toMinutes(time) {
-  const [hours, minutes] = String(time || "")
-    .split(":")
-    .map(Number);
-
+const toMinutes = (time) => {
+  const [hours, minutes] = String(time || "").split(":").map(Number);
   return hours * 60 + minutes;
-}
+};
 
-function toTime(minutes) {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-
-  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
-}
+const toTime = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(
+    minutes % 60
+  ).padStart(2, "0")}`;
 
 function getCurrentSlot(schedules, service, dayOfWeek, nowMinutes) {
-  const duration = Number(
-    service.durationMinutes
-  );
+  const duration = Number(service.durationMinutes);
 
   for (const schedule of schedules || []) {
     if (
       !schedule.active ||
-      Number(schedule.dayOfWeek) !== dayOfWeek
+      Number(schedule.dayOfWeek) !== dayOfWeek ||
+      nowMinutes < toMinutes(schedule.startTime) ||
+      nowMinutes >= toMinutes(schedule.endTime)
     ) {
       continue;
     }
 
-    const scheduleStart = toMinutes(schedule.startTime);
-    const scheduleEnd = toMinutes(schedule.endTime);
+    const start = toMinutes(schedule.startTime);
+    const end = toMinutes(schedule.endTime);
     const slotDuration =
-      duration > 0
-        ? duration
-        : Number(schedule.slotDurationMinutes);
+      duration > 0 ? duration : Number(schedule.slotDurationMinutes);
 
-    if (
-      !Number.isFinite(slotDuration) ||
-      slotDuration <= 0 ||
-      nowMinutes < scheduleStart ||
-      nowMinutes >= scheduleEnd
-    ) {
-      continue;
-    }
+    if (!Number.isFinite(slotDuration) || slotDuration <= 0) continue;
 
     const slotStart =
-      scheduleStart +
-      Math.floor((nowMinutes - scheduleStart) / slotDuration) *
-        slotDuration;
-
-    const slotEnd = Math.min(
-      slotStart + slotDuration,
-      scheduleEnd
-    );
+      start + Math.floor((nowMinutes - start) / slotDuration) * slotDuration;
+    const slotEnd = Math.min(slotStart + slotDuration, end);
 
     return {
       startTime: toTime(slotStart),
@@ -115,26 +83,6 @@ function getCurrentSlot(schedules, service, dayOfWeek, nowMinutes) {
   }
 
   return null;
-}
-
-function isActiveBooking(booking, now) {
-  if (booking.status === "confirmed") return true;
-
-  return (
-    booking.status === "pending" &&
-    booking.expiresAt &&
-    new Date(booking.expiresAt).getTime() > now.getTime()
-  );
-}
-
-function overlapsSlot(booking, slot) {
-  const start = toMinutes(booking.startTime);
-  const end = toMinutes(booking.endTime);
-
-  return (
-    start < slot.endMinutes &&
-    end > slot.startMinutes
-  );
 }
 
 function serializeUpcomingBooking(booking) {
@@ -157,83 +105,69 @@ function serializeUpcomingBooking(booking) {
 export async function GET() {
   try {
     const auth = await requireAdmin();
-
-    if (!auth?.authenticated) {
-      return jsonError("Unauthorized", 401);
-    }
+    if (!auth?.authenticated) return jsonError("Unauthorized", 401);
 
     await connectDB();
 
     const now = new Date();
     const parts = getDhakaDateParts(now);
     const today = `${parts.year}-${parts.month}-${parts.day}`;
-    const nowMinutes =
-      Number(parts.hour) * 60 + Number(parts.minute);
+    const nowMinutes = Number(parts.hour) * 60 + Number(parts.minute);
+    const nowTime = toTime(nowMinutes);
 
     const weekdays = {
-      Sun: 0,
-      Mon: 1,
-      Tue: 2,
-      Wed: 3,
-      Thu: 4,
-      Fri: 5,
-      Sat: 6,
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3,
+      Thu: 4, Fri: 5, Sat: 6,
     };
-
     const dayOfWeek = weekdays[parts.weekday];
     const todayRange = getDateRange(today);
     const nextSevenDaysRange = getDateRange(today, 7);
-    const nowTime = toTime(nowMinutes);
 
-    // Fetch only the fields required by the dashboard.
-    const [facilities, todayBookings, revenueResult] =
-      await Promise.all([
-        Facility.find({ active: true })
-          .select("name slug facilityType sharedResource services schedules")
-          .lean(),
+    const [facilities, todayBookings, revenueResult] = await Promise.all([
+      Facility.find({ active: true })
+        .select("name slug facilityType sharedResource services schedules")
+        .lean(),
 
-        Booking.find({
-          bookingDate: todayRange,
-          status: { $in: ACTIVE_STATUSES },
-          $or: [
-            { status: "confirmed" },
-            {
-              status: "pending",
-              expiresAt: { $gt: now },
-            },
-          ],
-        })
-          .select(
-            "_id bookingReference customerName facilityId facilityName serviceId serviceName bookingDate startTime endTime quantity status paymentStatus expiresAt"
-          )
-          .sort({ startTime: 1 })
-          .lean(),
+      Booking.find({
+        bookingDate: todayRange,
+        status: { $in: ACTIVE_STATUSES },
+        $or: [
+          { status: "confirmed" },
+          { status: "pending", expiresAt: { $gt: now } },
+        ],
+      })
+        .select(
+          "_id bookingReference customerName facilityId facilityName serviceId serviceName startTime endTime quantity status paymentStatus"
+        )
+        .sort({ startTime: 1 })
+        .lean(),
 
-        Payment.aggregate([
-          {
-            $match: {
-              status: "paid",
-              paidAt: todayRange,
-            },
+      Payment.aggregate([
+        { $match: { status: "paid", paidAt: todayRange } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$amount" },
+            count: { $sum: 1 },
           },
-          {
-            $group: {
-              _id: null,
-              total: { $sum: "$amount" },
-              count: { $sum: 1 },
-            },
-          },
-        ]),
-      ]);
+        },
+      ]),
+    ]);
 
-    const membershipIds = facilities.flatMap((facility) =>
-      (facility.services || [])
-        .filter((service) => service.type === "membership")
-        .map((service) => service._id)
+    const membershipIds = new Set(
+      facilities.flatMap((facility) =>
+        (facility.services || [])
+          .filter((service) => service.type === "membership")
+          .map((service) => String(service._id))
+      )
     );
 
-    const nonMembershipFilter = membershipIds.length
-      ? { serviceId: { $nin: membershipIds } }
+    const nonMembershipFilter = membershipIds.size
+      ? {
+          serviceId: {
+            $nin: [...membershipIds],
+          },
+        }
       : {};
 
     const [todayBookingCount, upcomingBookingCount, activeMemberships] =
@@ -244,10 +178,7 @@ export async function GET() {
           ...nonMembershipFilter,
           $or: [
             { status: { $in: ["confirmed", "completed"] } },
-            {
-              status: "pending",
-              expiresAt: { $gt: now },
-            },
+            { status: "pending", expiresAt: { $gt: now } },
           ],
         }),
 
@@ -257,102 +188,77 @@ export async function GET() {
           ...nonMembershipFilter,
           $or: [
             { status: "confirmed" },
-            {
-              status: "pending",
-              expiresAt: { $gt: now },
-            },
+            { status: "pending", expiresAt: { $gt: now } },
           ],
         }),
 
-        membershipIds.length
+        membershipIds.size
           ? Booking.countDocuments({
-              serviceId: { $in: membershipIds },
+              serviceId: { $in: [...membershipIds] },
               status: "confirmed",
               paymentStatus: "paid",
             })
           : Promise.resolve(0),
       ]);
 
-    // Expired pending reservations are never included in occupancy.
-    const activeTodayBookings = todayBookings.filter((booking) =>
-      isActiveBooking(booking, now)
-    );
-
     const facilityOverview = facilities.map((facility) => {
-      const services = (facility.services || [])
-        .filter(
-          (service) =>
-            service.active &&
-            service.type !== "membership"
-        )
-        .map((service) => {
-          const capacity = Number(service.capacity);
-          const slot = getCurrentSlot(
-            facility.schedules,
-            service,
-            dayOfWeek,
-            nowMinutes
-          );
+      const services = [];
 
-          if (
-            !slot ||
-            !Number.isFinite(capacity) ||
-            capacity <= 0
-          ) {
-            return {
-              id: String(service._id),
-              name: service.name,
-              capacity: capacity > 0 ? capacity : null,
-              currentSlot: slot
-                ? {
-                    startTime: slot.startTime,
-                    endTime: slot.endTime,
-                  }
-                : null,
-              booked: 0,
-              occupancyPercent: 0,
-              full: false,
-            };
-          }
+      for (const service of facility.services || []) {
+        if (!service.active || service.type === "membership") continue;
 
-          const bookings = activeTodayBookings.filter((booking) => {
-            if (!overlapsSlot(booking, slot)) return false;
+        const rawCapacity = Number(service.capacity);
+        const capacity =
+          Number.isFinite(rawCapacity) && rawCapacity > 0
+            ? rawCapacity
+            : null;
 
-            if (facility.sharedResource) {
-              return (
-                String(booking.facilityId) === String(facility._id)
-              );
+        const slot = getCurrentSlot(
+          facility.schedules,
+          service,
+          dayOfWeek,
+          nowMinutes
+        );
+
+        let booked = 0;
+
+        if (slot && capacity) {
+          for (const booking of todayBookings) {
+            if (
+              String(booking.facilityId) !== String(facility._id) ||
+              toMinutes(booking.startTime) >= slot.endMinutes ||
+              toMinutes(booking.endTime) <= slot.startMinutes
+            ) {
+              continue;
             }
 
-            return (
-              String(booking.facilityId) === String(facility._id) &&
+            if (
+              facility.sharedResource ||
               String(booking.serviceId) === String(service._id)
-            );
-          });
+            ) {
+              booked += Number(booking.quantity || 0);
+            }
+          }
+        }
 
-          const booked = bookings.reduce(
-            (total, booking) => total + Number(booking.quantity || 0),
-            0
-          );
+        const occupancyPercent =
+          slot && capacity
+            ? Math.min(100, Math.round((booked / capacity) * 100))
+            : 0;
 
-          return {
-            id: String(service._id),
-            name: service.name,
-            capacity,
-            currentSlot: {
-              startTime: slot.startTime,
-              endTime: slot.endTime,
-            },
-            booked,
-            occupancyPercent: Math.min(
-              100,
-              Math.round((booked / capacity) * 100)
-            ),
-            full: booked >= capacity,
-          };
+        services.push({
+          id: String(service._id),
+          name: service.name,
+          capacity,
+          currentSlot: slot
+            ? { startTime: slot.startTime, endTime: slot.endTime }
+            : null,
+          booked,
+          occupancyPercent,
+          full: Boolean(slot && capacity && booked >= capacity),
         });
+      }
 
-      // Use the first service with an active slot as the facility summary.
       const current = services.find((service) => service.currentSlot);
 
       return {
@@ -369,22 +275,18 @@ export async function GET() {
       };
     });
 
-    const upcomingBookings = activeTodayBookings
-      .filter((booking) => booking.startTime > nowTime)
-      .filter(
-        (booking) =>
-          !membershipIds.some(
-            (id) => String(id) === String(booking.serviceId)
-          )
-      )
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
-      .slice(0, UPCOMING_LIMIT)
-      .map(serializeUpcomingBooking);
+    const upcomingBookings = [];
+    for (const booking of todayBookings) {
+      if (
+        booking.startTime > nowTime &&
+        !membershipIds.has(String(booking.serviceId))
+      ) {
+        upcomingBookings.push(serializeUpcomingBooking(booking));
+        if (upcomingBookings.length === UPCOMING_LIMIT) break;
+      }
+    }
 
-    const revenue = revenueResult[0] || {
-      total: 0,
-      count: 0,
-    };
+    const revenue = revenueResult[0] || { total: 0, count: 0 };
 
     return NextResponse.json(
       {
@@ -401,8 +303,7 @@ export async function GET() {
             averageOccupancy: facilityOverview.length
               ? Math.round(
                   facilityOverview.reduce(
-                    (total, facility) =>
-                      total + facility.occupancyPercent,
+                    (total, facility) => total + facility.occupancyPercent,
                     0
                   ) / facilityOverview.length
                 )
@@ -413,9 +314,7 @@ export async function GET() {
         },
       },
       {
-        headers: {
-          "Cache-Control": "private, no-store, max-age=0",
-        },
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
       }
     );
   } catch (error) {

@@ -10,27 +10,26 @@ import BookingLock from "@/models/bookingLock";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OPEN_TIME = 11 * 60;
-const CLOSE_TIME = 23 * 60;
+const OPEN_TIME = 660;
+const CLOSE_TIME = 1380;
 const BOOKING_EXPIRY_MINUTES = 10;
 const MAX_ITEMS = 20;
-const ACTIVE_BOOKING_STATUSES = ["pending", "confirmed"];
 const TIME_SLICE_MINUTES = 30;
 
-const PLAYGROUND_OFF_PEAK_DISCOUNT_PERCENTAGE = 30;
-const PLAYGROUND_OFF_PEAK_START_TIME = 11 * 60;
-const PLAYGROUND_OFF_PEAK_END_TIME = 16 * 60;
+const ACTIVE_BOOKING_STATUSES = ["pending", "confirmed"];
+const PLAYGROUND_SLUG = "playground";
+const PLAYGROUND_DISCOUNT = 30;
+const OFF_PEAK_START = 660;
+const OFF_PEAK_END = 960;
 
-const FIXED_MOVIE_SESSIONS = [
+const MOVIE_SESSIONS = [
   { startTime: "11:00", endTime: "14:00" },
   { startTime: "14:00", endTime: "17:00" },
   { startTime: "17:00", endTime: "20:00" },
   { startTime: "20:00", endTime: "23:00" },
 ];
 
-const PLAYGROUND_SLUG = "playground";
-
-const PLAYGROUND_ACTIVITY_SLUGS = new Set([
+const PLAYGROUND_ACTIVITIES = new Set([
   "futsal",
   "basketball",
   "badminton",
@@ -47,18 +46,7 @@ function jsonError(message, status = 400, extra = {}) {
 }
 
 function jsonSuccess(data, status = 200) {
-  return NextResponse.json(
-    { success: true, ...data },
-    { status }
-  );
-}
-
-function isValidObjectId(value) {
-  return mongoose.Types.ObjectId.isValid(value);
-}
-
-function toObjectId(value) {
-  return new mongoose.Types.ObjectId(value);
+  return NextResponse.json({ success: true, ...data }, { status });
 }
 
 function normalizeString(value) {
@@ -73,12 +61,16 @@ function normalizePhone(value) {
   return normalizeString(value).replace(/\s+/g, " ");
 }
 
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+function isValidObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(value);
 }
 
-function isValidPhone(phone) {
-  return /^[0-9+\-() ]{7,25}$/.test(phone);
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidPhone(value) {
+  return /^[0-9+\-() ]{7,25}$/.test(value);
 }
 
 function isValidDateString(value) {
@@ -97,54 +89,25 @@ function timeToMinutes(value) {
 }
 
 function minutesToTime(minutes) {
-  const safeMinutes = Math.max(0, Math.min(1439, minutes));
-  const hours = Math.floor(safeMinutes / 60);
-  const mins = safeMinutes % 60;
+  const safe = Math.max(0, Math.min(1439, minutes));
+  const hours = Math.floor(safe / 60);
+  const mins = safe % 60;
 
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 }
 
 function addMinutes(time, minutes) {
   const base = timeToMinutes(time);
-  if (base === null) return null;
-
-  return minutesToTime(base + minutes);
+  return base === null ? null : minutesToTime(base + minutes);
 }
 
 function isTimeAligned(time, interval = TIME_SLICE_MINUTES) {
   const minutes = timeToMinutes(time);
-  if (minutes === null) return false;
-
-  return minutes % interval === 0;
-}
-
-function getDhakaDateParts(date = new Date()) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Dhaka",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(date);
-  const result = {};
-
-  for (const part of parts) {
-    if (part.type !== "literal") {
-      result[part.type] = part.value;
-    }
-  }
-
-  return {
-    year: Number(result.year),
-    month: Number(result.month),
-    day: Number(result.day),
-  };
+  return minutes !== null && minutes % interval === 0;
 }
 
 function dateOnlyToUtc(dateString) {
   const [year, month, day] = dateString.split("-").map(Number);
-
   return new Date(Date.UTC(year, month - 1, day));
 }
 
@@ -152,19 +115,35 @@ function getDayOfWeek(dateString) {
   return dateOnlyToUtc(dateString).getUTCDay();
 }
 
-function isDateInPast(dateString) {
-  const requested = dateOnlyToUtc(dateString);
-  const todayParts = getDhakaDateParts();
+function getDhakaDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
 
-  const today = new Date(
-    Date.UTC(
-      todayParts.year,
-      todayParts.month - 1,
-      todayParts.day
-    )
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
   );
 
-  return requested < today;
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+  };
+}
+
+function isDateInPast(dateString) {
+  const requested = dateOnlyToUtc(dateString);
+  const today = getDhakaDateParts();
+
+  return (
+    requested <
+    new Date(Date.UTC(today.year, today.month - 1, today.day))
+  );
 }
 
 function getDateStartUtc(dateString) {
@@ -172,31 +151,22 @@ function getDateStartUtc(dateString) {
 }
 
 function getDateEndUtc(dateString) {
-  const start = dateOnlyToUtc(dateString);
-
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return new Date(getDateStartUtc(dateString).getTime() + 86400000);
 }
 
 function normalizeQuantity(value) {
   const quantity = Number(value);
-
-  if (!Number.isInteger(quantity)) return null;
-
-  return quantity;
+  return Number.isInteger(quantity) ? quantity : null;
 }
 
 function normalizeItem(item, index) {
-  if (!item || typeof item !== "object") {
-    return {
-      error: `Invalid booking item at position ${index + 1}.`,
-    };
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return { error: `Invalid booking item at position ${index + 1}.` };
   }
 
   const facilityId = normalizeString(item.facilityId);
   const serviceId = normalizeString(item.serviceId);
   const date = normalizeString(item.date);
-
-  // These values are never trusted for server-side pricing or duration.
   const startTime = normalizeString(item.startTime || item.slot);
   const endTime = normalizeString(item.endTime);
   const movieName = normalizeString(item.movieName || item.movie);
@@ -214,18 +184,16 @@ function normalizeItem(item, index) {
     return { error: `Invalid booking date at item ${index + 1}.` };
   }
 
-  // A start time is optional for date-only day passes.
-  // Other service types validate their required time later.
   if (startTime && !isValidTime(startTime)) {
     return { error: `Invalid start time at item ${index + 1}.` };
   }
 
-  if (quantity === null || quantity < 1) {
-    return { error: `Invalid quantity at item ${index + 1}.` };
-  }
-
   if (endTime && !isValidTime(endTime)) {
     return { error: `Invalid end time at item ${index + 1}.` };
+  }
+
+  if (quantity === null || quantity < 1) {
+    return { error: `Invalid quantity at item ${index + 1}.` };
   }
 
   return {
@@ -246,56 +214,36 @@ function getScheduleForBooking(
   endTime,
   durationMinutes
 ) {
-  const schedules = Array.isArray(facility.schedules)
-    ? facility.schedules
-    : [];
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
 
-  const startMinutes = timeToMinutes(startTime);
-  const endMinutes = timeToMinutes(endTime);
-
-  if (startMinutes === null || endMinutes === null) {
-    return null;
-  }
+  if (start === null || end === null) return null;
 
   return (
-    schedules.find((schedule) => {
-      if (!schedule.active) return false;
-
-      if (Number(schedule.dayOfWeek) !== dayOfWeek) {
+    facility.schedules?.find((schedule) => {
+      if (!schedule.active || Number(schedule.dayOfWeek) !== dayOfWeek) {
         return false;
       }
 
       const scheduleStart = timeToMinutes(schedule.startTime);
       const scheduleEnd = timeToMinutes(schedule.endTime);
-
-      if (scheduleStart === null || scheduleEnd === null) {
-        return false;
-      }
+      const slotDuration = Number(schedule.slotDurationMinutes);
 
       if (
-        startMinutes < scheduleStart ||
-        endMinutes > scheduleEnd
+        scheduleStart === null ||
+        scheduleEnd === null ||
+        !Number.isFinite(slotDuration) ||
+        slotDuration < 1
       ) {
         return false;
       }
 
-      const slotDuration = Number(schedule.slotDurationMinutes);
-
-      if (!Number.isFinite(slotDuration) || slotDuration < 1) {
-        return false;
-      }
-
-      const offset = startMinutes - scheduleStart;
-
-      if (offset % slotDuration !== 0) {
-        return false;
-      }
-
-      if (endMinutes - startMinutes !== durationMinutes) {
-        return false;
-      }
-
-      return true;
+      return (
+        start >= scheduleStart &&
+        end <= scheduleEnd &&
+        (start - scheduleStart) % slotDuration === 0 &&
+        end - start === durationMinutes
+      );
     }) || null
   );
 }
@@ -330,32 +278,25 @@ function isPlaygroundFacility(facility) {
 }
 
 function isPlaygroundActivity(service) {
-  return PLAYGROUND_ACTIVITY_SLUGS.has(service.slug);
+  return PLAYGROUND_ACTIVITIES.has(service.slug);
 }
 
-/*
- * Server-authoritative Playground off-peak pricing.
- * The regular price always comes from MongoDB.
- */
 function calculateBookingPrice({ facility, service, startTime }) {
   const regularPrice = Number(service.price);
 
   if (!Number.isFinite(regularPrice) || regularPrice < 0) {
-    return {
-      error: `Invalid price configured for ${service.name}.`,
-    };
+    return { error: `Invalid price configured for ${service.name}.` };
   }
 
-  const startMinutes = timeToMinutes(startTime);
-
-  const eligibleForOffPeakDiscount =
+  const start = timeToMinutes(startTime);
+  const discounted =
     isPlaygroundFacility(facility) &&
     isPlaygroundActivity(service) &&
-    startMinutes !== null &&
-    startMinutes >= PLAYGROUND_OFF_PEAK_START_TIME &&
-    startMinutes < PLAYGROUND_OFF_PEAK_END_TIME;
+    start !== null &&
+    start >= OFF_PEAK_START &&
+    start < OFF_PEAK_END;
 
-  if (!eligibleForOffPeakDiscount) {
+  if (!discounted) {
     return {
       regularPrice,
       priceAtBooking: regularPrice,
@@ -365,16 +306,14 @@ function calculateBookingPrice({ facility, service, startTime }) {
   }
 
   const discountAmount = Math.round(
-    (regularPrice * PLAYGROUND_OFF_PEAK_DISCOUNT_PERCENTAGE) / 100
+    (regularPrice * PLAYGROUND_DISCOUNT) / 100
   );
-
-  const priceAtBooking = Math.max(0, regularPrice - discountAmount);
 
   return {
     regularPrice,
-    priceAtBooking,
+    priceAtBooking: Math.max(0, regularPrice - discountAmount),
     discountAmount,
-    discountPercentage: PLAYGROUND_OFF_PEAK_DISCOUNT_PERCENTAGE,
+    discountPercentage: PLAYGROUND_DISCOUNT,
   };
 }
 
@@ -383,15 +322,17 @@ function isExclusiveService(service) {
 }
 
 function getResourceKey(facility, service) {
+  const facilityId = facility._id.toString();
+
   if (isPlaygroundFacility(facility)) {
-    return `playground:${facility._id.toString()}`;
+    return `playground:${facilityId}`;
   }
 
   if (isExclusiveService(service)) {
-    return `exclusive:${facility._id.toString()}:${service._id.toString()}`;
+    return `exclusive:${facilityId}:${service._id.toString()}`;
   }
 
-  return `service:${facility._id.toString()}:${service._id.toString()}`;
+  return `service:${facilityId}:${service._id.toString()}`;
 }
 
 function getSliceTimes(startTime, durationMinutes) {
@@ -399,35 +340,36 @@ function getSliceTimes(startTime, durationMinutes) {
   if (start === null) return [];
 
   const result = [];
-  const sliceCount = Math.ceil(durationMinutes / TIME_SLICE_MINUTES);
 
-  for (let index = 0; index < sliceCount; index += 1) {
-    result.push(minutesToTime(start + index * TIME_SLICE_MINUTES));
+  for (
+    let i = 0, count = Math.ceil(durationMinutes / TIME_SLICE_MINUTES);
+    i < count;
+    i++
+  ) {
+    result.push(minutesToTime(start + i * TIME_SLICE_MINUTES));
   }
 
   return result;
 }
 
 function getRequiredCapacityUnits(service, quantity) {
-  if (isExclusiveService(service)) return [0];
-
-  if (service.pricingType === "per_booking") return [0];
+  if (
+    isExclusiveService(service) ||
+    service.pricingType === "per_booking"
+  ) {
+    return [0];
+  }
 
   return Array.from({ length: quantity }, (_, index) => index);
 }
 
 function buildLockRequests({ booking, facility, service }) {
   const resourceKey = getResourceKey(facility, service);
-
-  const sliceTimes = getSliceTimes(
-    booking.startTime,
-    booking.durationMinutes
-  );
-
+  const slices = getSliceTimes(booking.startTime, booking.durationMinutes);
   const units = getRequiredCapacityUnits(service, booking.quantity);
   const requests = [];
 
-  for (const timeSlice of sliceTimes) {
+  for (const timeSlice of slices) {
     for (const unit of units) {
       requests.push({
         bookingGroupReference: booking.bookingGroupReference,
@@ -455,32 +397,12 @@ async function removeExpiredLocks() {
 async function cancelExpiredBookings() {
   const now = new Date();
 
-  const expiredBookings = await Booking.find({
-    status: "pending",
-    paymentStatus: "pending",
-    expiresAt: {
-      $ne: null,
-      $lte: now,
-    },
-  }).select("_id bookingGroupReference");
-
-  if (!expiredBookings.length) return;
-
-  const bookingIds = expiredBookings.map((booking) => booking._id);
-
-  const groupReferences = [
-    ...new Set(
-      expiredBookings
-        .map((booking) => booking.bookingGroupReference)
-        .filter(Boolean)
-    ),
-  ];
-
+  // Update in MongoDB without loading expired bookings into Node.js.
   await Booking.updateMany(
     {
-      _id: { $in: bookingIds },
       status: "pending",
       paymentStatus: "pending",
+      expiresAt: { $ne: null, $lte: now },
     },
     {
       $set: {
@@ -492,12 +414,6 @@ async function cancelExpiredBookings() {
       },
     }
   );
-
-  if (groupReferences.length) {
-    await BookingLock.deleteMany({
-      bookingGroupReference: { $in: groupReferences },
-    });
-  }
 }
 
 async function cleanupExpiredReservations() {
@@ -518,18 +434,14 @@ async function releaseBookingLocks(bookingId) {
 }
 
 async function createLocksAtomically({ booking, facility, service }) {
-  const lockRequests = buildLockRequests({
-    booking,
-    facility,
-    service,
-  });
+  const requests = buildLockRequests({ booking, facility, service });
 
-  if (!lockRequests.length) {
+  if (!requests.length) {
     return { success: true, locks: [] };
   }
 
   try {
-    const locks = await BookingLock.insertMany(lockRequests, {
+    const locks = await BookingLock.insertMany(requests, {
       ordered: true,
     });
 
@@ -547,47 +459,36 @@ async function createLocksAtomically({ booking, facility, service }) {
 
 async function findExistingBookingsForItem({
   facilityId,
-  serviceId,
   bookingDate,
   startTime,
   endTime,
 }) {
-  const dateStart = getDateStartUtc(bookingDate);
-  const dateEnd = getDateEndUtc(bookingDate);
-
   return Booking.find({
     facilityId,
     bookingDate: {
-      $gte: dateStart,
-      $lt: dateEnd,
+      $gte: getDateStartUtc(bookingDate),
+      $lt: getDateEndUtc(bookingDate),
     },
-    status: {
-      $in: ACTIVE_BOOKING_STATUSES,
-    },
-    paymentStatus: {
-      $in: ["unpaid", "pending", "paid"],
-    },
-    startTime: {
-      $lt: endTime,
-    },
-    endTime: {
-      $gt: startTime,
-    },
+    status: { $in: ACTIVE_BOOKING_STATUSES },
+    paymentStatus: { $in: ["unpaid", "pending", "paid"] },
+    startTime: { $lt: endTime },
+    endTime: { $gt: startTime },
   }).select(
     "_id facilityId serviceId serviceName startTime endTime quantity status paymentStatus"
   );
 }
 
-function calculateExistingQuantity({ bookings, serviceId }) {
-  return bookings
-    .filter(
-      (booking) =>
-        booking.serviceId?.toString() === serviceId.toString()
-    )
-    .reduce(
-      (total, booking) => total + Number(booking.quantity || 0),
-      0
-    );
+function calculateExistingQuantity(bookings, serviceId) {
+  const id = serviceId.toString();
+
+  return bookings.reduce(
+    (total, booking) =>
+      total +
+      (booking.serviceId?.toString() === id
+        ? Number(booking.quantity || 0)
+        : 0),
+    0
+  );
 }
 
 function hasPlaygroundOverlap(bookings) {
@@ -597,41 +498,33 @@ function hasPlaygroundOverlap(bookings) {
 }
 
 function validateMovieSession(startTime, endTime) {
-  return FIXED_MOVIE_SESSIONS.some(
+  return MOVIE_SESSIONS.some(
     (session) =>
       session.startTime === startTime &&
       session.endTime === endTime
   );
 }
 
-function createBookingReference() {
+function createReference(prefix) {
   const timestamp = Date.now().toString(36).toUpperCase();
   const random = new mongoose.Types.ObjectId()
     .toString()
     .slice(-8)
     .toUpperCase();
 
-  return `CP-${timestamp}-${random}`;
+  return `${prefix}${timestamp}-${random}`;
+}
+
+function createBookingReference() {
+  return createReference("CP-");
 }
 
 function createBookingGroupReference() {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = new mongoose.Types.ObjectId()
-    .toString()
-    .slice(-8)
-    .toUpperCase();
-
-  return `CPG-${timestamp}-${random}`;
+  return createReference("CPG-");
 }
 
 function createPaymentTransactionId() {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = new mongoose.Types.ObjectId()
-    .toString()
-    .slice(-8)
-    .toUpperCase();
-
-  return `CPAY${timestamp}${random}`;
+  return createReference("CPAY");
 }
 
 function getExpiryDate() {
@@ -673,7 +566,6 @@ export async function POST(request) {
     await cleanupExpiredReservations();
 
     const body = await request.json();
-
     const customer =
       body?.customer && typeof body.customer === "object"
         ? body.customer
@@ -682,18 +574,14 @@ export async function POST(request) {
     const customerName = normalizeString(
       customer.name || body.customerName
     );
-
     const customerEmail = normalizeEmail(
       customer.email || body.customerEmail
     );
-
     const customerPhone = normalizePhone(
       customer.phone || body.customerPhone
     );
 
-    const rawItems = Array.isArray(body?.items)
-      ? body.items
-      : [];
+    const rawItems = Array.isArray(body?.items) ? body.items : [];
 
     if (customerName.length < 2 || customerName.length > 100) {
       return jsonError("Please provide a valid customer name.");
@@ -719,14 +607,12 @@ export async function POST(request) {
 
     const normalizedItems = [];
 
-    for (let index = 0; index < rawItems.length; index += 1) {
-      const normalized = normalizeItem(rawItems[index], index);
+    for (let index = 0; index < rawItems.length; index++) {
+      const item = normalizeItem(rawItems[index], index);
 
-      if (normalized.error) {
-        return jsonError(normalized.error);
-      }
+      if (item.error) return jsonError(item.error);
 
-      normalizedItems.push(normalized);
+      normalizedItems.push(item);
     }
 
     const facilityIds = [
@@ -734,15 +620,14 @@ export async function POST(request) {
     ];
 
     const facilities = await Facility.find({
-      _id: { $in: facilityIds.map(toObjectId) },
+      _id: {
+        $in: facilityIds.map((id) => new mongoose.Types.ObjectId(id)),
+      },
       active: true,
     });
 
     const facilityMap = new Map(
-      facilities.map((facility) => [
-        facility._id.toString(),
-        facility,
-      ])
+      facilities.map((facility) => [facility._id.toString(), facility])
     );
 
     const preparedBookings = [];
@@ -752,44 +637,32 @@ export async function POST(request) {
 
     const paymentTransactionId = createPaymentTransactionId();
 
-    for (let index = 0; index < normalizedItems.length; index += 1) {
+    for (let index = 0; index < normalizedItems.length; index++) {
       const item = normalizedItems[index];
-
       const facility = facilityMap.get(item.facilityId);
 
       if (!facility) {
-        return jsonError(
-          `Facility not found for item ${index + 1}.`
-        );
+        return jsonError(`Facility not found for item ${index + 1}.`);
       }
 
       const service = facility.services.id(item.serviceId);
 
       if (!service) {
-        return jsonError(
-          `Service not found for item ${index + 1}.`
-        );
+        return jsonError(`Service not found for item ${index + 1}.`);
       }
 
       if (!service.active) {
-        return jsonError(
-          `${service.name} is currently unavailable.`
-        );
+        return jsonError(`${service.name} is currently unavailable.`);
       }
 
       const quantity = item.quantity;
-
       const minimumQuantity = Number(service.minimumQuantity || 1);
-
       const maximumQuantity =
         service.maximumQuantity == null
           ? null
           : Number(service.maximumQuantity);
 
-      const dayPass = isUnlimitedFitnessDayPass(
-        facility,
-        service
-      );
+      const dayPass = isUnlimitedFitnessDayPass(facility, service);
 
       if (quantity < minimumQuantity) {
         return jsonError(
@@ -797,7 +670,6 @@ export async function POST(request) {
         );
       }
 
-      // Unlimited fitness day passes do not use a maximum quantity cap.
       if (
         !dayPass &&
         maximumQuantity !== null &&
@@ -816,9 +688,6 @@ export async function POST(request) {
 
       const dayOfWeek = getDayOfWeek(item.date);
 
-      /*
-       * Monthly memberships keep their existing behavior.
-       */
       if (isMembershipService(service)) {
         if (quantity !== 1) {
           return jsonError(
@@ -830,34 +699,20 @@ export async function POST(request) {
         const endTime = "23:00";
         const durationMinutes = 720;
 
-        const schedule = getScheduleForBooking(
-          facility,
-          dayOfWeek,
-          startTime,
-          endTime,
-          durationMinutes
+        const hasActiveSchedule = facility.schedules?.some(
+          (entry) =>
+            entry.active && Number(entry.dayOfWeek) === dayOfWeek
         );
 
-        const hasActiveScheduleForDay =
-          facility.schedules?.some(
-            (entry) =>
-              entry.active &&
-              Number(entry.dayOfWeek) === dayOfWeek
-          );
-
-        if (!hasActiveScheduleForDay) {
+        if (!hasActiveSchedule) {
           return jsonError(
             `${service.name} is not available on the selected date.`
           );
         }
 
-        const bookingDate = dateOnlyToUtc(item.date);
-        const membershipPrice = Number(service.price);
+        const priceAtBooking = Number(service.price);
 
-        if (
-          !Number.isFinite(membershipPrice) ||
-          membershipPrice < 0
-        ) {
+        if (!Number.isFinite(priceAtBooking) || priceAtBooking < 0) {
           return jsonError(
             `Invalid price configured for ${service.name}.`
           );
@@ -867,17 +722,15 @@ export async function POST(request) {
           facility,
           service,
           item,
-          bookingDate,
+          bookingDate: getDateStartUtc(item.date),
           startTime,
           endTime,
           durationMinutes,
-          priceAtBooking: membershipPrice,
-          totalAmount: membershipPrice * quantity,
+          priceAtBooking,
+          totalAmount: priceAtBooking * quantity,
           bookingGroupReference,
           paymentTransactionId,
           expiresAt: expiryDate,
-          dayOfWeek,
-          schedule,
           membership: true,
           dayPass: false,
         });
@@ -885,22 +738,10 @@ export async function POST(request) {
         continue;
       }
 
-      /*
-       * Unlimited fitness day passes:
-       * - Date-only booking.
-       * - No schedule lookup.
-       * - No slot availability/capacity check.
-       * - No BookingLock.
-       * - Price remains server-controlled.
-       *
-       * Canonical times are stored because the booking schema
-       * requires startTime, endTime and durationMinutes.
-       */
       if (dayPass) {
         const startTime = "11:00";
         const endTime = "23:00";
         const durationMinutes = 720;
-        const bookingDate = dateOnlyToUtc(item.date);
 
         const priceDetails = calculateBookingPrice({
           facility,
@@ -912,13 +753,9 @@ export async function POST(request) {
           return jsonError(priceDetails.error);
         }
 
-        const totalAmount =
-          priceDetails.priceAtBooking * quantity;
+        const totalAmount = priceDetails.priceAtBooking * quantity;
 
-        if (
-          !Number.isFinite(totalAmount) ||
-          totalAmount < 0
-        ) {
+        if (!Number.isFinite(totalAmount) || totalAmount < 0) {
           return jsonError(
             `Invalid booking amount for ${service.name}.`
           );
@@ -928,7 +765,7 @@ export async function POST(request) {
           facility,
           service,
           item,
-          bookingDate,
+          bookingDate: getDateStartUtc(item.date),
           startTime,
           endTime,
           durationMinutes,
@@ -937,8 +774,6 @@ export async function POST(request) {
           bookingGroupReference,
           paymentTransactionId,
           expiresAt: expiryDate,
-          dayOfWeek,
-          schedule: null,
           membership: false,
           dayPass: true,
         });
@@ -950,9 +785,6 @@ export async function POST(request) {
       let endTime = item.endTime;
       let durationMinutes;
 
-      /*
-       * Movie sessions remain fixed.
-       */
       if (isMovieService(service)) {
         if (!validateMovieSession(startTime, endTime || "")) {
           return jsonError(
@@ -981,18 +813,13 @@ export async function POST(request) {
           );
         }
 
-        const calculatedEndTime = addMinutes(
-          startTime,
-          durationMinutes
-        );
+        endTime = addMinutes(startTime, durationMinutes);
 
-        if (!calculatedEndTime) {
+        if (!endTime) {
           return jsonError(
             `Invalid start time for ${service.name}.`
           );
         }
-
-        endTime = calculatedEndTime;
       }
 
       const startMinutes = timeToMinutes(startTime);
@@ -1014,10 +841,7 @@ export async function POST(request) {
         );
       }
 
-      if (
-        !isMovieService(service) &&
-        !isTimeAligned(startTime)
-      ) {
+      if (!isMovieService(service) && !isTimeAligned(startTime)) {
         return jsonError(
           `Invalid start time for ${service.name}.`
         );
@@ -1037,11 +861,8 @@ export async function POST(request) {
         );
       }
 
-      const bookingDate = dateOnlyToUtc(item.date);
-
       const existingBookings = await findExistingBookingsForItem({
         facilityId: facility._id,
-        serviceId: service._id,
         bookingDate: item.date,
         startTime,
         endTime,
@@ -1068,11 +889,10 @@ export async function POST(request) {
 
       if (isMovieService(service)) {
         const capacity = Number(service.capacity || 50);
-
-        const used = calculateExistingQuantity({
-          bookings: existingBookings,
-          serviceId: service._id,
-        });
+        const used = calculateExistingQuantity(
+          existingBookings,
+          service._id
+        );
 
         if (used + quantity > capacity) {
           return jsonError(
@@ -1087,15 +907,13 @@ export async function POST(request) {
         !isPlaygroundFacility(facility)
       ) {
         const capacity =
-          service.capacity == null
-            ? null
-            : Number(service.capacity);
+          service.capacity == null ? null : Number(service.capacity);
 
         if (capacity !== null && Number.isFinite(capacity)) {
-          const used = calculateExistingQuantity({
-            bookings: existingBookings,
-            serviceId: service._id,
-          });
+          const used = calculateExistingQuantity(
+            existingBookings,
+            service._id
+          );
 
           if (used + quantity > capacity) {
             return jsonError(
@@ -1128,7 +946,7 @@ export async function POST(request) {
         facility,
         service,
         item,
-        bookingDate,
+        bookingDate: getDateStartUtc(item.date),
         startTime,
         endTime,
         durationMinutes,
@@ -1137,16 +955,11 @@ export async function POST(request) {
         bookingGroupReference,
         paymentTransactionId,
         expiresAt: expiryDate,
-        dayOfWeek,
-        schedule,
         membership: false,
         dayPass: false,
       });
     }
 
-    /*
-     * Build Booking documents.
-     */
     const bookingDocuments = preparedBookings.map((prepared) => ({
       bookingReference: createBookingReference(),
       bookingGroupReference: prepared.bookingGroupReference,
@@ -1188,28 +1001,15 @@ export async function POST(request) {
       { ordered: true }
     );
 
-    createdBookingIds = insertedBookings.map(
-      (booking) => booking._id
-    );
+    createdBookingIds = insertedBookings.map((booking) => booking._id);
 
-    /*
-     * Claim physical capacity atomically for slot-based services.
-     * Memberships and date-only fitness day passes do not use locks.
-     */
-    for (
-      let index = 0;
-      index < preparedBookings.length;
-      index += 1
-    ) {
+    for (let index = 0; index < preparedBookings.length; index++) {
       const prepared = preparedBookings[index];
-      const booking = insertedBookings[index];
 
-      if (prepared.membership || prepared.dayPass) {
-        continue;
-      }
+      if (prepared.membership || prepared.dayPass) continue;
 
       const lockResult = await createLocksAtomically({
-        booking,
+        booking: insertedBookings[index],
         facility: prepared.facility,
         service: prepared.service,
       });
@@ -1238,9 +1038,6 @@ export async function POST(request) {
       0
     );
 
-    /*
-     * Final DB verification.
-     */
     const savedBookings = await Booking.find({
       _id: { $in: createdBookingIds },
       bookingGroupReference,
@@ -1257,6 +1054,8 @@ export async function POST(request) {
         status: "pending",
         paymentStatus: "pending",
       });
+
+      createdBookingIds = [];
 
       return jsonError(
         "Unable to safely create the booking. Please try again.",
