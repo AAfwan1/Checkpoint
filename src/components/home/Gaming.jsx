@@ -13,12 +13,12 @@ const menuImages = [
     label: "GAME PRICING",
   },
   {
-    src: gaming.images.find((image) => image.includes("/ps5.webp")),
+    src: gaming.images.find((image) => image.includes("/newps5.webp")),
     alt: "The Checkpoint PS5 games list",
     label: "PS5 GAME LIST",
   },
   {
-    src: gaming.images.find((image) => image.includes("/othergaming.webp")),
+    src: gaming.images.find((image) => image.includes("/newothergames.webp")),
     alt: "The Checkpoint other gaming games list",
     label: "OTHER GAMES",
   },
