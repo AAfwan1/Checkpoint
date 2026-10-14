@@ -228,7 +228,7 @@ export default function Footer() {
 
             <div className="mt-4 overflow-hidden rounded-2xl border border-white/[0.09] transition-colors hover:border-blue-500/30">
               <Image
-                src="/tickify.jpg"
+                src="/tickify.webp"
                 alt="Tickify"
                 width={600}
                 height={300}
