@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -77,6 +76,7 @@ const FACILITY_UI = [
 const OPEN_TIME = "11:00";
 const CLOSE_TIME = "23:00";
 const DHAKA_TIME_ZONE = "Asia/Dhaka";
+const MINIMUM_SEATS_TO_BOOK = 50;
 
 function formatPrice(value) {
   const number = Number(value);
@@ -349,6 +349,24 @@ function getMaximumQuantity(service, { ignoreCapacity = false } = {}) {
     service?.pricingType !== "per_booking"
     ? capacity
     : null;
+}
+
+function hasMinimumSeatsRemaining(slot) {
+  const remaining = Number(slot?.remaining);
+
+  return (
+    Number.isFinite(remaining) &&
+    remaining >= MINIMUM_SEATS_TO_BOOK
+  );
+}
+
+function isSlotUnavailable(slot) {
+  return (
+    !slot ||
+    slot.available === false ||
+    slot.status === "full" ||
+    !hasMinimumSeatsRemaining(slot)
+  );
 }
 
 export default function BookingPage() {
@@ -758,9 +776,7 @@ export default function BookingPage() {
     visibleAvailabilitySlots.some(
       (slot) =>
         slot.startTime === selectedSlot &&
-        slot.available !== false &&
-        slot.status !== "full" &&
-        Number(slot.remaining ?? 1) > 0
+        !isSlotUnavailable(slot)
     );
 
   const canAdd = Boolean(
@@ -925,19 +941,13 @@ export default function BookingPage() {
         item.endTime === slot?.endTime
     );
 
-    if (
-      !isVisible ||
-      slot?.available === false ||
-      slot?.status === "full" ||
-      Number(slot?.remaining ?? 1) <= 0
-    ) {
+    if (!isVisible || isSlotUnavailable(slot)) {
       return;
     }
 
     setSelectedSlot(slot.startTime || "");
     setSubmitError("");
 
-    // The details section is scrolled into view after the slot is selected.
     scrollToSection(customerDetailsRef);
   }
 
@@ -973,9 +983,7 @@ export default function BookingPage() {
       ? visibleAvailabilitySlots.find(
           (item) =>
             item.startTime === selectedSlot &&
-            item.available !== false &&
-            item.status !== "full" &&
-            Number(item.remaining ?? 1) > 0
+            !isSlotUnavailable(item)
         )
       : null;
 
@@ -1678,10 +1686,7 @@ export default function BookingPage() {
                   ) : (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {visibleAvailabilitySlots.map((slot) => {
-                        const full =
-                          slot.available === false ||
-                          slot.status === "full" ||
-                          Number(slot.remaining ?? 1) <= 0;
+                        const full = isSlotUnavailable(slot);
 
                         const active = selectedSlot === slot.startTime;
 
@@ -1885,133 +1890,133 @@ export default function BookingPage() {
               </div>
 
               {/* QUANTITY */}
+
               {selectedFacility !== "playground" && (
+                <div
+                  ref={quantityRef}
+                  className="mt-6 scroll-mt-28 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:scroll-mt-32 sm:p-7"
+                >
+                  <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">
+                        {isMovie ? "07" : "06"}
+                      </p>
+                      <h2 className="mt-2 text-2xl font-semibold">
+                        {isMovie
+                          ? "Number of tickets"
+                          : isMembership
+                            ? "Membership quantity"
+                            : "Number of people"}
+                      </h2>
+                      <p className="mt-2 text-sm text-white/40">
+                        {isMovie
+                          ? "Choose the number of seats you need."
+                          : isMembership
+                            ? "Membership is booked for one member at a time."
+                            : isDayPass
+                              ? "Choose how many day passes you need for the selected date."
+                              : "Choose how many people will use this service."}
+                      </p>
+                    </div>
 
-              <div
-                ref={quantityRef}
-                className="mt-6 scroll-mt-28 rounded-3xl border border-white/10 bg-[#07101c] p-5 sm:scroll-mt-32 sm:p-7"
-              >
-                <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">
-                      {isMovie ? "07" : "06"}
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold">
-                      {isMovie
-                        ? "Number of tickets"
-                        : isMembership
-                          ? "Membership quantity"
-                          : "Number of people"}
-                    </h2>
-                    <p className="mt-2 text-sm text-white/40">
-                      {isMovie
-                        ? "Choose the number of seats you need."
-                        : isMembership
-                          ? "Membership is booked for one member at a time."
-                          : isDayPass
-                            ? "Choose how many day passes you need for the selected date."
-                            : "Choose how many people will use this service."}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={decreaseQuantity}
+                        disabled={quantity <= minimumQuantity}
+                        aria-label="Decrease quantity"
+                        className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <FiMinus size={17} />
+                      </button>
+
+                      <span
+                        className="flex h-12 min-w-16 items-center justify-center rounded-xl border border-white/10 bg-[#030712] px-4 text-lg font-semibold"
+                        aria-live="polite"
+                      >
+                        {quantity}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={increaseQuantity}
+                        disabled={
+                          maximumQuantity !== null &&
+                          quantity >= maximumQuantity
+                        }
+                        aria-label="Increase quantity"
+                        className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <FiPlus size={17} />
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  {maximumQuantity !== null && (
+                    <p className="mt-4 text-xs text-white/30">
+                      Maximum per order: {maximumQuantity}
+                    </p>
+                  )}
+
+                  {isDayPass && (
+                    <p className="mt-3 text-xs leading-5 text-white/35">
+                      Day passes do not require a time slot. Bookings for
+                      this date are not limited by time-slot capacity.
+                    </p>
+                  )}
+
+                  <div className="mt-6 flex items-center justify-between rounded-2xl border border-white/10 bg-[#030712] px-4 py-4">
+                    <div>
+                      <p className="text-xs text-white/35">Current total</p>
+
+                      {selectedPriceDetails.discounted && (
+                        <p className="mt-1 text-xs text-white/30 line-through">
+                          {formatPrice(
+                            selectedPriceDetails.originalPrice * quantity
+                          )}
+                        </p>
+                      )}
+
+                      <p
+                        className={`mt-1 text-xl font-semibold ${
+                          selectedPriceDetails.discounted
+                            ? "text-emerald-300"
+                            : ""
+                        }`}
+                      >
+                        {formatPrice(itemTotal)}
+                      </p>
+
+                      {selectedPriceDetails.discounted && (
+                        <p className="mt-1 text-xs text-emerald-300/80">
+                          You save{" "}
+                          {formatPrice(
+                            selectedPriceDetails.discountAmount * quantity
+                          )}
+                        </p>
+                      )}
+                    </div>
+
                     <button
                       type="button"
-                      onClick={decreaseQuantity}
-                      disabled={quantity <= minimumQuantity}
-                      aria-label="Decrease quantity"
-                      className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                      onClick={addToBooking}
+                      disabled={!canAdd}
+                      className="flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <FiMinus size={17} />
-                    </button>
-
-                    <span
-                      className="flex h-12 min-w-16 items-center justify-center rounded-xl border border-white/10 bg-[#030712] px-4 text-lg font-semibold"
-                      aria-live="polite"
-                    >
-                      {quantity}
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={increaseQuantity}
-                      disabled={
-                        maximumQuantity !== null &&
-                        quantity >= maximumQuantity
-                      }
-                      aria-label="Increase quantity"
-                      className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-[#030712] text-white/60 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <FiPlus size={17} />
+                      Add to booking
+                      <FiPlus size={16} />
                     </button>
                   </div>
-                </div>
 
-                {maximumQuantity !== null && (
-                  <p className="mt-4 text-xs text-white/30">
-                    Maximum per order: {maximumQuantity}
-                  </p>
-                )}
-
-                {isDayPass && (
-                  <p className="mt-3 text-xs leading-5 text-white/35">
-                    Day passes do not require a time slot. Bookings for
-                    this date are not limited by time-slot capacity.
-                  </p>
-                )}
-
-                <div className="mt-6 flex items-center justify-between rounded-2xl border border-white/10 bg-[#030712] px-4 py-4">
-                  <div>
-                    <p className="text-xs text-white/35">Current total</p>
-
-                    {selectedPriceDetails.discounted && (
-                      <p className="mt-1 text-xs text-white/30 line-through">
-                        {formatPrice(
-                          selectedPriceDetails.originalPrice * quantity
-                        )}
-                      </p>
-                    )}
-
-                    <p
-                      className={`mt-1 text-xl font-semibold ${
-                        selectedPriceDetails.discounted
-                          ? "text-emerald-300"
-                          : ""
-                      }`}
-                    >
-                      {formatPrice(itemTotal)}
+                  {!canAdd && (
+                    <p className="mt-3 text-center text-xs text-white/25">
+                      Select the required date
+                      {needsTimeSlot ? " and an available time" : ""}
+                      {isMovie ? " and movie" : ""} and complete your
+                      contact details to continue.
                     </p>
-
-                    {selectedPriceDetails.discounted && (
-                      <p className="mt-1 text-xs text-emerald-300/80">
-                        You save{" "}
-                        {formatPrice(
-                          selectedPriceDetails.discountAmount * quantity
-                        )}
-                      </p>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={addToBooking}
-                    disabled={!canAdd}
-                    className="flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Add to booking
-                    <FiPlus size={16} />
-                  </button>
+                  )}
                 </div>
-
-                {!canAdd && (
-                  <p className="mt-3 text-center text-xs text-white/25">
-                    Select the required date
-                    {needsTimeSlot ? " and an available time" : ""}
-                    {isMovie ? " and movie" : ""} and complete your
-                    contact details to continue.
-                  </p>
-                )}
-              </div>
               )}
 
               {submitError && (

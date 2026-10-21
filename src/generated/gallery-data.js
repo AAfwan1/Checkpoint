@@ -107,7 +107,7 @@ const resturant = {
 const gaming = {
   "images": [
     "https://res.cloudinary.com/qds5td8c/image/upload/v1791969038/the-checkpoint/gaming/newothergames.webp",
-    "https://res.cloudinary.com/qds5td8c/image/upload/v1790701399/the-checkpoint/gaming/pricelist.webp",
+    "https://res.cloudinary.com/qds5td8c/image/upload/v1792603507/the-checkpoint/gaming/pricelist.jpg",
     "https://res.cloudinary.com/qds5td8c/image/upload/v1791969040/the-checkpoint/gaming/newps5.webp"
   ]
 };
