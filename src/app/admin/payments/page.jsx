@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,6 +9,7 @@ import {
   MdCheckCircle,
   MdClose,
   MdContentCopy,
+  MdDeleteOutline,
   MdErrorOutline,
   MdInfoOutline,
   MdPayment,
@@ -29,9 +31,7 @@ const formatDate = (date) => {
 
   const parsedDate = new Date(date);
 
-  if (Number.isNaN(parsedDate.getTime())) {
-    return "—";
-  }
+  if (Number.isNaN(parsedDate.getTime())) return "—";
 
   return parsedDate.toLocaleDateString("en-US", {
     month: "short",
@@ -45,9 +45,7 @@ const formatDateTime = (date) => {
 
   const parsedDate = new Date(date);
 
-  if (Number.isNaN(parsedDate.getTime())) {
-    return "—";
-  }
+  if (Number.isNaN(parsedDate.getTime())) return "—";
 
   return parsedDate.toLocaleString("en-US", {
     month: "short",
@@ -62,16 +60,12 @@ const getStatusClasses = (status) => {
   switch (status) {
     case "Paid":
       return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
-
     case "Pending":
       return "border-amber-400/20 bg-amber-400/10 text-amber-300";
-
     case "Failed":
       return "border-red-400/20 bg-red-400/10 text-red-300";
-
     case "Refunded":
       return "border-violet-400/20 bg-violet-400/10 text-violet-300";
-
     default:
       return "border-white/10 bg-white/[0.04] text-gray-400";
   }
@@ -81,16 +75,12 @@ const getStatusIcon = (status) => {
   switch (status) {
     case "Paid":
       return MdCheckCircle;
-
     case "Pending":
       return MdWarning;
-
     case "Failed":
       return MdErrorOutline;
-
     case "Refunded":
       return MdRefresh;
-
     default:
       return MdInfoOutline;
   }
@@ -108,8 +98,9 @@ export default function PaymentsPage() {
   const [type, setType] = useState("All Types");
   const [method, setMethod] = useState("All Methods");
 
-  const [selectedTransaction, setSelectedTransaction] =
-    useState(null);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [transactionToDelete, setTransactionToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [toast, setToast] = useState("");
 
@@ -134,71 +125,41 @@ export default function PaymentsPage() {
 
         const params = new URLSearchParams();
 
-        if (search.trim()) {
-          params.set(
-            "search",
-            search.trim()
-          );
-        }
+        if (search.trim()) params.set("search", search.trim());
 
-        if (
-          status &&
-          status !== "All Statuses"
-        ) {
+        if (status && status !== "All Statuses") {
           params.set("status", status);
         }
 
-        if (
-          type &&
-          type !== "All Types"
-        ) {
+        if (type && type !== "All Types") {
           params.set("type", type);
         }
 
-        if (
-          method &&
-          method !== "All Methods"
-        ) {
+        if (method && method !== "All Methods") {
           params.set("method", method);
         }
 
-        const queryString =
-          params.toString();
+        const queryString = params.toString();
 
-const response = await fetch(
-  `/api/payment${
-    queryString
-      ? `?${queryString}`
-      : ""
-  }`,
-  {
-    method: "GET",
-    cache: "no-store",
-  }
-);
+        const response = await fetch(
+          `/api/payment${queryString ? `?${queryString}` : ""}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
 
-        const result =
-          await response.json();
+        const result = await response.json();
 
         if (!response.ok || !result.success) {
-          throw new Error(
-            result.message ||
-              "Unable to load payments."
-          );
+          throw new Error(result.message || "Unable to load payments.");
         }
 
         setTransactions(
-          Array.isArray(
-            result.transactions
-          )
-            ? result.transactions
-            : []
+          Array.isArray(result.transactions) ? result.transactions : []
         );
       } catch (error) {
-        console.error(
-          "Failed to load payments:",
-          error
-        );
+        console.error("Failed to load payments:", error);
 
         setError(
           error instanceof Error
@@ -210,12 +171,7 @@ const response = await fetch(
         setRefreshing(false);
       }
     },
-    [
-      search,
-      status,
-      type,
-      method,
-    ]
+    [search, status, type, method]
   );
 
   /* ------------------------------------------------------------------------ */
@@ -227,9 +183,7 @@ const response = await fetch(
       loadTransactions(false);
     }, 250);
 
-    return () => {
-      window.clearTimeout(timeout);
-    };
+    return () => window.clearTimeout(timeout);
   }, [loadTransactions]);
 
   /* ------------------------------------------------------------------------ */
@@ -237,58 +191,35 @@ const response = await fetch(
   /* ------------------------------------------------------------------------ */
 
   const summary = useMemo(() => {
-    const paidTransactions =
-      transactions.filter(
-        (transaction) =>
-          transaction.status === "Paid"
-      );
+    const paidTransactions = transactions.filter(
+      (transaction) => transaction.status === "Paid"
+    );
 
-    const pendingTransactions =
-      transactions.filter(
-        (transaction) =>
-          transaction.status === "Pending"
-      );
+    const pendingTransactions = transactions.filter(
+      (transaction) => transaction.status === "Pending"
+    );
 
-    const failedTransactions =
-      transactions.filter(
-        (transaction) =>
-          transaction.status === "Failed"
-      );
+    const failedTransactions = transactions.filter(
+      (transaction) => transaction.status === "Failed"
+    );
 
-    const paidAmount =
-      paidTransactions.reduce(
-        (sum, transaction) =>
-          sum +
-          Number(
-            transaction.amount || 0
-          ),
-        0
-      );
+    const paidAmount = paidTransactions.reduce(
+      (sum, transaction) => sum + Number(transaction.amount || 0),
+      0
+    );
 
-    const pendingAmount =
-      pendingTransactions.reduce(
-        (sum, transaction) =>
-          sum +
-          Number(
-            transaction.amount || 0
-          ),
-        0
-      );
+    const pendingAmount = pendingTransactions.reduce(
+      (sum, transaction) => sum + Number(transaction.amount || 0),
+      0
+    );
 
     return {
       total: transactions.length,
-
       paid: paidTransactions.length,
-
       paidAmount,
-
-      pending:
-        pendingTransactions.length,
-
+      pending: pendingTransactions.length,
       pendingAmount,
-
-      failed:
-        failedTransactions.length,
+      failed: failedTransactions.length,
     };
   }, [transactions]);
 
@@ -321,10 +252,63 @@ const response = await fetch(
 
   const handleRefresh = async () => {
     await loadTransactions(true);
+    showToast("Transactions refreshed.");
+  };
 
-    showToast(
-      "Transactions refreshed."
-    );
+  /* ------------------------------------------------------------------------ */
+  /* DELETE PAYMENT RECORD                                                    */
+  /* ------------------------------------------------------------------------ */
+
+  const handleDeleteTransaction = async () => {
+    if (!transactionToDelete || deleting) return;
+
+    // This must be the Payment document's MongoDB _id.
+    const paymentId =
+      transactionToDelete.paymentId || transactionToDelete.id;
+
+    setDeleting(true);
+
+    try {
+      const response = await fetch(
+        `/api/payment?id=${encodeURIComponent(paymentId)}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Unable to delete payment.");
+      }
+
+      setTransactions((current) =>
+        current.filter(
+          (transaction) =>
+            (transaction.paymentId || transaction.id) !== paymentId
+        )
+      );
+
+      if (
+        selectedTransaction &&
+        (selectedTransaction.paymentId || selectedTransaction.id) ===
+          paymentId
+      ) {
+        setSelectedTransaction(null);
+      }
+
+      setTransactionToDelete(null);
+      showToast("Payment record permanently deleted.");
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete payment."
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   /* ------------------------------------------------------------------------ */
@@ -333,36 +317,23 @@ const response = await fetch(
 
   const handleCopy = async (value) => {
     if (!value) {
-      showToast(
-        "Nothing available to copy."
-      );
+      showToast("Nothing available to copy.");
       return;
     }
 
     try {
       if (
         navigator.clipboard &&
-        typeof navigator.clipboard
-          .writeText === "function"
+        typeof navigator.clipboard.writeText === "function"
       ) {
-        await navigator.clipboard.writeText(
-          value
-        );
-
-        showToast(
-          "Copied to clipboard."
-        );
-
+        await navigator.clipboard.writeText(value);
+        showToast("Copied to clipboard.");
         return;
       }
 
-      showToast(
-        "Unable to copy."
-      );
+      showToast("Unable to copy.");
     } catch {
-      showToast(
-        "Unable to copy."
-      );
+      showToast("Unable to copy.");
     }
   };
 
@@ -372,9 +343,7 @@ const response = await fetch(
 
   return (
     <div className="min-h-screen bg-[#050A14] text-white">
-      {/* ------------------------------------------------------------------ */}
-      {/* HEADER                                                             */}
-      {/* ------------------------------------------------------------------ */}
+      {/* HEADER */}
 
       <header className="border-b border-white/[0.06] bg-[#050A14]/95 px-4 py-5 backdrop-blur-xl sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1600px]">
@@ -393,9 +362,7 @@ const response = await fetch(
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-400">
                     Finance
                   </p>
-
                   <span className="h-1 w-1 rounded-full bg-gray-700" />
-
                   <span className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
                     Payments
                   </span>
@@ -406,9 +373,8 @@ const response = await fetch(
                 </h1>
 
                 <p className="mt-1 max-w-2xl text-sm text-gray-500">
-                  View booking and membership
-                  payment transactions and
-                  their current gateway status.
+                  View booking and membership payment transactions and their
+                  current gateway status.
                 </p>
               </div>
             </div>
@@ -421,24 +387,15 @@ const response = await fetch(
             >
               <MdRefresh
                 size={18}
-                className={
-                  refreshing
-                    ? "animate-spin"
-                    : ""
-                }
+                className={refreshing ? "animate-spin" : ""}
               />
-
-              {refreshing
-                ? "Refreshing..."
-                : "Refresh"}
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
       </header>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* MAIN                                                               */}
-      {/* ------------------------------------------------------------------ */}
+      {/* MAIN */}
 
       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
         {/* SUMMARY */}
@@ -454,18 +411,14 @@ const response = await fetch(
           <SummaryCard
             icon={MdTrendingUp}
             label="Paid Revenue"
-            value={formatCurrency(
-              summary.paidAmount
-            )}
+            value={formatCurrency(summary.paidAmount)}
             description={`${summary.paid} successful payments`}
           />
 
           <SummaryCard
             icon={MdWarning}
             label="Pending"
-            value={formatCurrency(
-              summary.pendingAmount
-            )}
+            value={formatCurrency(summary.pendingAmount)}
             description={`${summary.pending} awaiting payment`}
           />
 
@@ -491,10 +444,9 @@ const response = await fetch(
               </p>
 
               <p className="mt-1 text-xs leading-5 text-gray-500">
-                Customer bookings use SSLCommerz.
-                Payment status shown here comes
-                from the booking records updated by
-                the server-side payment flow.
+                Customer bookings use SSLCommerz. Payment status shown here
+                comes from the booking records updated by the server-side
+                payment flow.
               </p>
             </div>
           </div>
@@ -536,11 +488,7 @@ const response = await fetch(
               <input
                 type="text"
                 value={search}
-                onChange={(event) =>
-                  setSearch(
-                    event.target.value
-                  )
-                }
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search customer, transaction, booking..."
                 className="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.025] pl-10 pr-4 text-sm text-gray-200 outline-none placeholder:text-gray-600 focus:border-blue-500/40"
               />
@@ -561,20 +509,13 @@ const response = await fetch(
             <FilterSelect
               value={type}
               onChange={setType}
-              options={[
-                "All Types",
-                "Booking",
-                "Membership",
-              ]}
+              options={["All Types", "Booking", "Membership"]}
             />
 
             <FilterSelect
               value={method}
               onChange={setMethod}
-              options={[
-                "All Methods",
-                "SSLCommerz",
-              ]}
+              options={["All Methods", "SSLCommerz"]}
             />
 
             <button
@@ -608,58 +549,26 @@ const response = await fetch(
                 <table className="w-full min-w-[1100px]">
                   <thead>
                     <tr className="border-b border-white/[0.06] text-left">
-                      <TableHead>
-                        Transaction
-                      </TableHead>
-
-                      <TableHead>
-                        Customer
-                      </TableHead>
-
-                      <TableHead>
-                        Service
-                      </TableHead>
-
-                      <TableHead>
-                        Amount
-                      </TableHead>
-
-                      <TableHead>
-                        Method
-                      </TableHead>
-
-                      <TableHead>
-                        Status
-                      </TableHead>
-
-                      <TableHead>
-                        Date
-                      </TableHead>
-
-                      <TableHead align="right">
-                        Action
-                      </TableHead>
+                      <TableHead>Transaction</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead>Service</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead align="right">Action</TableHead>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {transactions.map(
-                      (transaction) => (
-                        <TransactionRow
-                          key={
-                            transaction.id
-                          }
-                          transaction={
-                            transaction
-                          }
-                          onView={() =>
-                            setSelectedTransaction(
-                              transaction
-                            )
-                          }
-                        />
-                      )
-                    )}
+                    {transactions.map((transaction) => (
+                      <TransactionRow
+                        key={transaction.id}
+                        transaction={transaction}
+                        onView={() => setSelectedTransaction(transaction)}
+                        onDelete={() => setTransactionToDelete(transaction)}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -667,60 +576,115 @@ const response = await fetch(
               {/* MOBILE */}
 
               <div className="divide-y divide-white/[0.06] lg:hidden">
-                {transactions.map(
-                  (transaction) => (
-                    <MobileTransactionRow
-                      key={
-                        transaction.id
-                      }
-                      transaction={
-                        transaction
-                      }
-                      onView={() =>
-                        setSelectedTransaction(
-                          transaction
-                        )
-                      }
-                    />
-                  )
-                )}
+                {transactions.map((transaction) => (
+                  <MobileTransactionRow
+                    key={transaction.id}
+                    transaction={transaction}
+                    onView={() => setSelectedTransaction(transaction)}
+                    onDelete={() => setTransactionToDelete(transaction)}
+                  />
+                ))}
               </div>
 
-              {transactions.length ===
-                0 && <EmptyState />}
+              {transactions.length === 0 && <EmptyState />}
             </>
           )}
         </section>
       </main>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* DETAILS MODAL                                                      */}
-      {/* ------------------------------------------------------------------ */}
+      {/* DETAILS MODAL */}
 
       {selectedTransaction && (
         <TransactionModal
-          transaction={
-            selectedTransaction
-          }
-          onClose={() =>
-            setSelectedTransaction(null)
-          }
+          transaction={selectedTransaction}
+          onClose={() => setSelectedTransaction(null)}
           onCopy={handleCopy}
         />
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* TOAST                                                              */}
-      {/* ------------------------------------------------------------------ */}
+      {/* DELETE CONFIRMATION */}
+
+      {transactionToDelete && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleting) {
+              setTransactionToDelete(null);
+            }
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-payment-title"
+            className="w-full max-w-md rounded-2xl border border-red-400/15 bg-[#07101C] p-5 shadow-2xl shadow-black/60"
+          >
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300">
+              <MdDeleteOutline size={22} />
+            </div>
+
+            <h2
+              id="delete-payment-title"
+              className="mt-4 text-lg font-semibold text-white"
+            >
+              Delete payment record?
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-gray-400">
+              This permanently deletes the selected Payment record. It does not
+              cancel the booking or issue a refund. This action cannot be
+              undone.
+            </p>
+
+            <div className="mt-5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+              <p className="text-[10px] uppercase tracking-[0.13em] text-gray-600">
+                Transaction
+              </p>
+
+              <p className="mt-1 break-all text-xs font-medium text-gray-200">
+                {transactionToDelete.id}
+              </p>
+
+              <p className="mt-1 text-xs text-gray-500">
+                {transactionToDelete.customer} ·{" "}
+                {formatCurrency(transactionToDelete.amount)}
+              </p>
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setTransactionToDelete(null)}
+                className="h-10 rounded-xl border border-white/[0.08] px-4 text-sm font-medium text-gray-300 transition hover:bg-white/[0.04] disabled:opacity-50"
+              >
+                Keep record
+              </button>
+
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleDeleteTransaction}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-red-500 px-4 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? (
+                  <MdRefresh size={17} className="animate-spin" />
+                ) : (
+                  <MdDeleteOutline size={17} />
+                )}
+                {deleting ? "Deleting..." : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOAST */}
 
       {toast && (
         <div className="fixed bottom-5 left-1/2 z-[100] -translate-x-1/2">
           <div className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-[#0A1624] px-4 py-3 text-sm font-medium text-gray-200 shadow-2xl shadow-black/40">
-            <MdCheckCircle
-              size={19}
-              className="text-emerald-400"
-            />
-
+            <MdCheckCircle size={19} className="text-emerald-400" />
             {toast}
           </div>
         </div>
@@ -733,12 +697,7 @@ const response = await fetch(
 /* SUMMARY CARD                                                               */
 /* -------------------------------------------------------------------------- */
 
-function SummaryCard({
-  icon: Icon,
-  label,
-  value,
-  description,
-}) {
+function SummaryCard({ icon: Icon, label, value, description }) {
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-[#07101C] p-4">
       <div className="flex items-start justify-between gap-3">
@@ -751,9 +710,7 @@ function SummaryCard({
             {value}
           </p>
 
-          <p className="mt-1 text-[11px] text-gray-600">
-            {description}
-          </p>
+          <p className="mt-1 text-[11px] text-gray-600">{description}</p>
         </div>
 
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.035] text-gray-400">
@@ -768,16 +725,11 @@ function SummaryCard({
 /* TABLE HEAD                                                                 */
 /* -------------------------------------------------------------------------- */
 
-function TableHead({
-  children,
-  align,
-}) {
+function TableHead({ children, align }) {
   return (
     <th
       className={`px-5 py-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-600 ${
-        align === "right"
-          ? "text-right"
-          : ""
+        align === "right" ? "text-right" : ""
       }`}
     >
       {children}
@@ -789,14 +741,8 @@ function TableHead({
 /* DESKTOP ROW                                                                */
 /* -------------------------------------------------------------------------- */
 
-function TransactionRow({
-  transaction,
-  onView,
-}) {
-  const StatusIcon =
-    getStatusIcon(
-      transaction.status
-    );
+function TransactionRow({ transaction, onView, onDelete }) {
+  const StatusIcon = getStatusIcon(transaction.status);
 
   return (
     <tr className="border-b border-white/[0.045] last:border-b-0">
@@ -804,7 +750,6 @@ function TransactionRow({
         <p className="text-xs font-semibold text-gray-200">
           {transaction.id}
         </p>
-
         <p className="mt-1 text-[10px] text-gray-600">
           {transaction.bookingGroupReference}
         </p>
@@ -814,7 +759,6 @@ function TransactionRow({
         <p className="text-xs font-medium text-gray-300">
           {transaction.customer}
         </p>
-
         <p className="mt-1 text-[10px] text-gray-600">
           {transaction.phone}
         </p>
@@ -824,7 +768,6 @@ function TransactionRow({
         <p className="text-xs font-medium text-gray-300">
           {transaction.service}
         </p>
-
         <p className="mt-1 text-[10px] text-gray-600">
           {transaction.facility}
         </p>
@@ -832,17 +775,12 @@ function TransactionRow({
 
       <td className="px-5 py-4">
         <p className="text-sm font-semibold text-white">
-          {formatCurrency(
-            transaction.amount
-          )}
+          {formatCurrency(transaction.amount)}
         </p>
       </td>
 
       <td className="px-5 py-4">
-        <p className="text-xs text-gray-300">
-          {transaction.method}
-        </p>
-
+        <p className="text-xs text-gray-300">{transaction.method}</p>
         <p className="mt-1 text-[10px] text-gray-600">
           {transaction.gateway}
         </p>
@@ -855,33 +793,39 @@ function TransactionRow({
           )}`}
         >
           <StatusIcon size={13} />
-
           {transaction.status}
         </span>
       </td>
 
       <td className="px-5 py-4">
         <p className="text-xs text-gray-400">
-          {formatDate(
-            transaction.date
-          )}
+          {formatDate(transaction.date)}
         </p>
-
         <p className="mt-1 text-[10px] text-gray-600">
-          {formatDateTime(
-            transaction.paymentDate
-          )}
+          {formatDateTime(transaction.paymentDate)}
         </p>
       </td>
 
       <td className="px-5 py-4 text-right">
-        <button
-          type="button"
-          onClick={onView}
-          className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-[10px] font-semibold text-gray-400 transition hover:bg-white/[0.05] hover:text-white"
-        >
-          View
-        </button>
+        <div className="inline-flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onView}
+            className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-[10px] font-semibold text-gray-400 transition hover:bg-white/[0.05] hover:text-white"
+          >
+            View
+          </button>
+
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label={`Delete payment ${transaction.id}`}
+            title="Delete payment record"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-400/15 bg-red-500/[0.06] text-red-300 transition hover:border-red-400/30 hover:bg-red-500/15 hover:text-red-200"
+          >
+            <MdDeleteOutline size={16} />
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -891,14 +835,8 @@ function TransactionRow({
 /* MOBILE ROW                                                                 */
 /* -------------------------------------------------------------------------- */
 
-function MobileTransactionRow({
-  transaction,
-  onView,
-}) {
-  const StatusIcon =
-    getStatusIcon(
-      transaction.status
-    );
+function MobileTransactionRow({ transaction, onView, onDelete }) {
+  const StatusIcon = getStatusIcon(transaction.status);
 
   return (
     <div className="p-4">
@@ -907,7 +845,6 @@ function MobileTransactionRow({
           <p className="truncate text-xs font-semibold text-gray-200">
             {transaction.id}
           </p>
-
           <p className="mt-1 truncate text-[10px] text-gray-600">
             {transaction.bookingGroupReference}
           </p>
@@ -919,7 +856,6 @@ function MobileTransactionRow({
           )}`}
         >
           <StatusIcon size={12} />
-
           {transaction.status}
         </span>
       </div>
@@ -929,39 +865,45 @@ function MobileTransactionRow({
           <p className="text-sm font-medium text-gray-300">
             {transaction.customer}
           </p>
-
           <p className="mt-1 text-xs text-gray-600">
             {transaction.service}
           </p>
         </div>
 
         <p className="text-sm font-semibold text-white">
-          {formatCurrency(
-            transaction.amount
-          )}
+          {formatCurrency(transaction.amount)}
         </p>
       </div>
 
       <div className="mt-4 flex items-center justify-between border-t border-white/[0.05] pt-3">
         <div>
           <p className="text-[10px] text-gray-600">
-            {formatDate(
-              transaction.date
-            )}
+            {formatDate(transaction.date)}
           </p>
-
           <p className="mt-1 text-[10px] text-gray-600">
             {transaction.gateway}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onView}
-          className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-[10px] font-semibold text-gray-400 transition hover:bg-white/[0.05] hover:text-white"
-        >
-          View Details
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onView}
+            className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-[10px] font-semibold text-gray-400 transition hover:bg-white/[0.05] hover:text-white"
+          >
+            View Details
+          </button>
+
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label={`Delete payment ${transaction.id}`}
+            title="Delete payment record"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-400/15 bg-red-500/[0.06] text-red-300 transition hover:border-red-400/30 hover:bg-red-500/15 hover:text-red-200"
+          >
+            <MdDeleteOutline size={17} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -971,27 +913,15 @@ function MobileTransactionRow({
 /* FILTER SELECT                                                              */
 /* -------------------------------------------------------------------------- */
 
-function FilterSelect({
-  value,
-  onChange,
-  options,
-}) {
+function FilterSelect({ value, onChange, options }) {
   return (
     <select
       value={value}
-      onChange={(event) =>
-        onChange(
-          event.target.value
-        )
-      }
+      onChange={(event) => onChange(event.target.value)}
       className="h-11 w-full appearance-none rounded-xl border border-white/[0.08] bg-white/[0.025] px-3.5 text-xs text-gray-300 outline-none focus:border-blue-500/40"
     >
       {options.map((option) => (
-        <option
-          key={option}
-          value={option}
-          className="bg-[#07101C]"
-        >
+        <option key={option} value={option} className="bg-[#07101C]">
           {option}
         </option>
       ))}
@@ -1011,11 +941,9 @@ function LoadingState() {
           size={32}
           className="mx-auto animate-spin text-blue-400"
         />
-
         <p className="mt-4 text-sm font-medium text-gray-300">
           Loading transactions...
         </p>
-
         <p className="mt-1 text-xs text-gray-600">
           Reading payment records from the database.
         </p>
@@ -1031,15 +959,10 @@ function LoadingState() {
 function EmptyState() {
   return (
     <div className="px-6 py-16 text-center">
-      <MdPayment
-        size={34}
-        className="mx-auto text-gray-700"
-      />
-
+      <MdPayment size={34} className="mx-auto text-gray-700" />
       <p className="mt-3 text-sm font-semibold text-gray-300">
         No transactions found
       </p>
-
       <p className="mt-1 text-xs text-gray-600">
         Try changing your search or filters.
       </p>
@@ -1051,26 +974,14 @@ function EmptyState() {
 /* TRANSACTION MODAL                                                          */
 /* -------------------------------------------------------------------------- */
 
-function TransactionModal({
-  transaction,
-  onClose,
-  onCopy,
-}) {
-  const StatusIcon =
-    getStatusIcon(
-      transaction.status
-    );
+function TransactionModal({ transaction, onClose, onCopy }) {
+  const StatusIcon = getStatusIcon(transaction.status);
 
   return (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
-        if (
-          event.target ===
-          event.currentTarget
-        ) {
-          onClose();
-        }
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-white/[0.08] bg-[#07101C] shadow-2xl shadow-black/60">
@@ -1081,7 +992,6 @@ function TransactionModal({
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-400">
               Transaction Details
             </p>
-
             <h2 className="mt-1 text-lg font-semibold text-white">
               {transaction.id}
             </h2>
@@ -1106,7 +1016,6 @@ function TransactionModal({
                 <p className="text-[10px] uppercase tracking-[0.13em] text-gray-600">
                   Payment Status
                 </p>
-
                 <div className="mt-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] ${getStatusClasses(
@@ -1114,7 +1023,6 @@ function TransactionModal({
                     )}`}
                   >
                     <StatusIcon size={13} />
-
                     {transaction.status}
                   </span>
                 </div>
@@ -1124,11 +1032,8 @@ function TransactionModal({
                 <p className="text-[10px] uppercase tracking-[0.13em] text-gray-600">
                   Amount
                 </p>
-
                 <p className="mt-1 text-2xl font-semibold text-white">
-                  {formatCurrency(
-                    transaction.amount
-                  )}
+                  {formatCurrency(transaction.amount)}
                 </p>
               </div>
             </div>
@@ -1137,102 +1042,31 @@ function TransactionModal({
           {/* CUSTOMER */}
 
           <DetailSection title="Customer">
-            <DetailRow
-              label="Name"
-              value={
-                transaction.customer
-              }
-            />
-
-            <DetailRow
-              label="Email"
-              value={
-                transaction.email
-              }
-            />
-
-            <DetailRow
-              label="Phone"
-              value={
-                transaction.phone
-              }
-            />
+            <DetailRow label="Name" value={transaction.customer} />
+            <DetailRow label="Email" value={transaction.email} />
+            <DetailRow label="Phone" value={transaction.phone} />
           </DetailSection>
 
           {/* BOOKING */}
 
           <DetailSection title="Booking">
-            <DetailRow
-              label="Booking Reference"
-              value={
-                transaction.bookingId
-              }
-            />
-
+            <DetailRow label="Booking Reference" value={transaction.bookingId} />
             <DetailRow
               label="Booking Group"
-              value={
-                transaction.bookingGroupReference
-              }
+              value={transaction.bookingGroupReference}
             />
-
-            <DetailRow
-              label="Type"
-              value={
-                transaction.type
-              }
-            />
-
-            <DetailRow
-              label="Service"
-              value={
-                transaction.service
-              }
-            />
-
-            <DetailRow
-              label="Facility"
-              value={
-                transaction.facility
-              }
-            />
-
-            <DetailRow
-              label="Date"
-              value={formatDate(
-                transaction.date
-              )}
-            />
-
-            <DetailRow
-              label="Time"
-              value={
-                transaction.time
-              }
-            />
+            <DetailRow label="Type" value={transaction.type} />
+            <DetailRow label="Service" value={transaction.service} />
+            <DetailRow label="Facility" value={transaction.facility} />
+            <DetailRow label="Date" value={formatDate(transaction.date)} />
+            <DetailRow label="Time" value={transaction.time} />
 
             {transaction.movieName && (
-              <DetailRow
-                label="Movie"
-                value={
-                  transaction.movieName
-                }
-              />
+              <DetailRow label="Movie" value={transaction.movieName} />
             )}
 
-            <DetailRow
-              label="Quantity"
-              value={
-                transaction.quantity
-              }
-            />
-
-            <DetailRow
-              label="Booking Status"
-              value={
-                transaction.bookingStatus
-              }
-            />
+            <DetailRow label="Quantity" value={transaction.quantity} />
+            <DetailRow label="Booking Status" value={transaction.bookingStatus} />
           </DetailSection>
 
           {/* PAYMENT */}
@@ -1240,68 +1074,41 @@ function TransactionModal({
           <DetailSection title="Payment">
             <DetailRow
               label="Payment Method"
-              value={
-                transaction.paymentMethod ||
-                transaction.method
-              }
+              value={transaction.paymentMethod || transaction.method}
             />
-
-            <DetailRow
-              label="Gateway"
-              value={
-                transaction.gateway
-              }
-            />
+            <DetailRow label="Gateway" value={transaction.gateway} />
 
             <CopyableRow
               label="Gateway Transaction ID"
-              value={
-                transaction.transactionId
-              }
+              value={transaction.transactionId}
               onCopy={onCopy}
             />
 
             <CopyableRow
               label="Booking Reference"
-              value={
-                transaction.bookingId
-              }
+              value={transaction.bookingId}
               onCopy={onCopy}
             />
 
             <DetailRow
               label="Payment Initiated"
-              value={formatDateTime(
-                transaction.paymentInitiatedAt
-              )}
+              value={formatDateTime(transaction.paymentInitiatedAt)}
             />
-
             <DetailRow
               label="Payment Paid"
-              value={formatDateTime(
-                transaction.paymentPaidAt
-              )}
+              value={formatDateTime(transaction.paymentPaidAt)}
             />
-
             <DetailRow
               label="Bank Transaction ID"
-              value={
-                transaction.paymentBankTransactionId
-              }
+              value={transaction.paymentBankTransactionId}
             />
-
             <DetailRow
               label="Card Type"
-              value={
-                transaction.paymentCardType
-              }
+              value={transaction.paymentCardType}
             />
-
             <DetailRow
               label="Validation ID"
-              value={
-                transaction.paymentValidationId
-              }
+              value={transaction.paymentValidationId}
             />
           </DetailSection>
         </div>
@@ -1326,16 +1133,12 @@ function TransactionModal({
 /* DETAIL SECTION                                                             */
 /* -------------------------------------------------------------------------- */
 
-function DetailSection({
-  title,
-  children,
-}) {
+function DetailSection({ title, children }) {
   return (
     <div className="mt-6">
       <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-600">
         {title}
       </p>
-
       <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.018]">
         {children}
       </div>
@@ -1347,16 +1150,10 @@ function DetailSection({
 /* DETAIL ROW                                                                 */
 /* -------------------------------------------------------------------------- */
 
-function DetailRow({
-  label,
-  value,
-}) {
+function DetailRow({ label, value }) {
   return (
     <div className="flex flex-col gap-1 border-b border-white/[0.05] px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
-      <span className="text-[11px] text-gray-600">
-        {label}
-      </span>
-
+      <span className="text-[11px] text-gray-600">{label}</span>
       <span className="break-all text-xs font-medium text-gray-300 sm:text-right">
         {value || "—"}
       </span>
@@ -1368,16 +1165,10 @@ function DetailRow({
 /* COPYABLE ROW                                                               */
 /* -------------------------------------------------------------------------- */
 
-function CopyableRow({
-  label,
-  value,
-  onCopy,
-}) {
+function CopyableRow({ label, value, onCopy }) {
   return (
     <div className="flex flex-col gap-2 border-b border-white/[0.05] px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
-      <span className="text-[11px] text-gray-600">
-        {label}
-      </span>
+      <span className="text-[11px] text-gray-600">{label}</span>
 
       <button
         type="button"

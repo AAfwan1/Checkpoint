@@ -12,6 +12,8 @@ import {
   FiFilter,
   FiRefreshCw,
   FiSearch,
+  FiTrash2,
+  FiAlertTriangle,
   FiUsers,
   FiX,
 } from "react-icons/fi";
@@ -222,6 +224,9 @@ export default function AdminBookingsPage() {
   const [date, setDate] = useState("");
   const [bookings, setBookings] = useState([]);
   const [selectedBooking, setSelectedBooking] = useState(null);
+  const [bookingToDelete, setBookingToDelete] = useState(null);
+  const [deletingBooking, setDeletingBooking] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -340,6 +345,55 @@ export default function AdminBookingsPage() {
 
   const handleRefresh = () => {
     if (!refreshing) fetchBookings({ silent: true });
+  };
+
+  const handleDeleteBooking = async () => {
+    if (!bookingToDelete?.id || deletingBooking) return;
+
+    try {
+      setDeletingBooking(true);
+      setDeleteError("");
+
+      const response = await fetch(
+        `/api/bookings/admin?id=${encodeURIComponent(bookingToDelete.id)}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+        }
+      );
+
+      let data;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("Invalid response from the delete API.");
+      }
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error || data?.message || "Unable to delete booking."
+        );
+      }
+
+      setBookings((current) =>
+        current.filter((booking) => booking.id !== bookingToDelete.id)
+      );
+
+      setSelectedBooking((current) =>
+        current?.id === bookingToDelete.id ? null : current
+      );
+
+      setBookingToDelete(null);
+      setLastUpdated(new Date());
+    } catch (deleteRequestError) {
+      console.error("Admin booking delete error:", deleteRequestError);
+      setDeleteError(
+        deleteRequestError?.message || "Unable to delete booking."
+      );
+    } finally {
+      setDeletingBooking(false);
+    }
   };
 
   const resetFilters = () => {
@@ -663,14 +717,27 @@ export default function AdminBookingsPage() {
                         </p>
                       </div>
 
-                      <div className="flex justify-end">
+                      <div className="flex justify-end gap-1">
                         <button
                           type="button"
                           onClick={() => setSelectedBooking(booking)}
                           aria-label={`View ${booking.bookingReference || booking.id}`}
+                          title="View booking"
                           className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.02] text-white/35 transition hover:border-blue-400/20 hover:bg-blue-500/10 hover:text-blue-400"
                         >
                           <FiEye size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeleteError("");
+                            setBookingToDelete(booking);
+                          }}
+                          aria-label={`Delete ${booking.bookingReference || booking.id}`}
+                          title="Permanently delete booking"
+                          className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-400/15 bg-red-400/[0.04] text-red-300/70 transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
+                        >
+                          <FiTrash2 size={15} />
                         </button>
                       </div>
                     </div>
@@ -881,6 +948,103 @@ export default function AdminBookingsPage() {
                   </p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permanent booking deletion confirmation */}
+      {bookingToDelete && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deletingBooking) {
+              setBookingToDelete(null);
+              setDeleteError("");
+            }
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-booking-title"
+            aria-describedby="delete-booking-description"
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-red-400/20 bg-[#07101D] shadow-2xl shadow-black/40"
+          >
+            <div className="flex items-start gap-4 border-b border-white/[0.07] p-5 sm:p-6">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-400/10 text-red-300">
+                <FiAlertTriangle size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-booking-title" className="text-base font-semibold text-white">
+                  Permanently delete booking?
+                </h2>
+                <p id="delete-booking-description" className="mt-2 text-sm leading-6 text-white/50">
+                  This permanently removes booking{" "}
+                  <span className="font-semibold text-white/80">
+                    #{bookingToDelete.bookingReference || bookingToDelete.id}
+                  </span>{" "}
+                  from the database. This action cannot be undone.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={deletingBooking}
+                onClick={() => {
+                  setBookingToDelete(null);
+                  setDeleteError("");
+                }}
+                aria-label="Close delete confirmation"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/35 transition hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <FiX size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5 sm:p-6">
+              <div className="rounded-xl border border-red-400/10 bg-red-400/[0.04] p-3">
+                <p className="text-xs leading-5 text-red-200/75">
+                  Associated payment records may also be permanently deleted. No refund will be issued.
+                </p>
+              </div>
+
+              {deleteError && (
+                <div className="rounded-xl border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-sm text-red-300">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  disabled={deletingBooking}
+                  onClick={() => {
+                    setBookingToDelete(null);
+                    setDeleteError("");
+                  }}
+                  className="inline-flex h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm font-medium text-white/65 transition hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Keep booking
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingBooking}
+                  onClick={handleDeleteBooking}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/15 px-4 text-sm font-semibold text-red-200 transition hover:border-red-400/40 hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingBooking ? (
+                    <>
+                      <FiRefreshCw size={14} className="animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <FiTrash2 size={14} />
+                      Delete permanently
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

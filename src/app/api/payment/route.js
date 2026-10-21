@@ -5,6 +5,8 @@ import { connectDB } from "@/lib/mongodb";
 import Booking from "@/models/booking";
 import Facility from "@/models/facility";
 import { requireAdmin } from "@/lib/requireAdmin";
+import mongoose from "mongoose";
+import Payment from "@/models/payment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -241,5 +243,45 @@ export async function GET(request) {
     console.error("GET /api/payment failed:", error);
 
     return jsonError("Unable to load payment transactions.", 500);
+  }
+}
+
+export async function DELETE(request) {
+  try {
+    // 1. Authenticate admin
+    const auth = await requireAdmin();
+
+    if (!auth.authenticated) {
+      return jsonError("Admin authentication required.", 401);
+    }
+
+    // 2. Validate payment document ID
+    const params = new URL(request.url).searchParams;
+    const paymentId = normalizeString(params.get("id"));
+
+    if (!mongoose.isValidObjectId(paymentId)) {
+      return jsonError("Invalid payment ID.");
+    }
+
+    // 3. Connect to MongoDB
+    await connectDB();
+
+    // 4. Permanently delete only the selected Payment document
+    const result = await Payment.deleteOne({
+      _id: new mongoose.Types.ObjectId(paymentId),
+    });
+
+    if (result.deletedCount === 0) {
+      return jsonError("Payment not found.", 404);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Payment permanently deleted.",
+    });
+  } catch (error) {
+    console.error("DELETE /api/payment failed:", error);
+
+    return jsonError("Unable to delete payment.", 500);
   }
 }

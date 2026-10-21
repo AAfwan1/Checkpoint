@@ -1885,6 +1885,7 @@ export default function BookingPage() {
               </div>
 
               {/* QUANTITY */}
+              {selectedFacility !== "playground" && (
 
               <div
                 ref={quantityRef}
@@ -2011,6 +2012,7 @@ export default function BookingPage() {
                   </p>
                 )}
               </div>
+              )}
 
               {submitError && (
                 <div

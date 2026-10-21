@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAdmin } from "@/lib/requireAdmin";
 import Booking from "@/models/booking";
+import Payment from "@/models/payment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -431,5 +432,111 @@ export async function GET(request) {
       "Unable to load bookings.",
       500
     );
+  }
+}
+
+export async function DELETE(request) {
+  let session;
+
+  try {
+    // 1. Authenticate admin
+    const auth = await requireAdmin();
+
+    if (!auth.authenticated) {
+      return jsonError("Unauthorized", 401);
+    }
+
+    // 2. Validate booking ID
+    const { searchParams } = new URL(request.url);
+    const bookingId = searchParams.get("id")?.trim();
+
+    if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
+      return jsonError("Invalid booking ID.");
+    }
+
+    // 3. Connect to MongoDB
+    await connectDB();
+
+    // 4. Start an atomic transaction
+    session = await mongoose.startSession();
+
+    let bookingNotFound = false;
+    let deletedPaymentsCount = 0;
+
+    await session.withTransaction(async () => {
+      bookingNotFound = false;
+      deletedPaymentsCount = 0;
+
+      // Find only the requested booking
+      const booking = await Booking.findById(bookingId)
+        .session(session)
+        .lean();
+
+      if (!booking) {
+        bookingNotFound = true;
+        return;
+      }
+
+      // Identify payment records associated with this booking.
+      // A shared payment document is intentionally deleted too.
+      const paymentConditions = [
+        { bookingIds: booking._id },
+      ];
+
+      if (booking.bookingGroupReference) {
+        paymentConditions.push({
+          bookingGroupReference: booking.bookingGroupReference,
+        });
+      }
+
+      if (booking.paymentTransactionId) {
+        paymentConditions.push(
+          { transactionId: booking.paymentTransactionId },
+          { gatewayTransactionId: booking.paymentTransactionId }
+        );
+      }
+
+      // Delete associated payment records first, inside the transaction
+      const paymentResult = await Payment.deleteMany(
+        { $or: paymentConditions },
+        { session }
+      );
+
+      deletedPaymentsCount = paymentResult.deletedCount || 0;
+
+      // Delete only the selected booking
+      const bookingResult = await Booking.deleteOne(
+        { _id: booking._id },
+        { session }
+      );
+
+      if (bookingResult.deletedCount !== 1) {
+        throw new Error("Booking deletion failed.");
+      }
+    });
+
+    if (bookingNotFound) {
+      return jsonError("Booking not found.", 404);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Booking permanently deleted.",
+      deleted: {
+        bookings: 1,
+        payments: deletedPaymentsCount,
+      },
+    });
+  } catch (error) {
+    console.error("Admin booking delete API error:", error);
+
+    return jsonError(
+      "Unable to delete booking.",
+      500
+    );
+  } finally {
+    if (session) {
+      await session.endSession();
+    }
   }
 }
