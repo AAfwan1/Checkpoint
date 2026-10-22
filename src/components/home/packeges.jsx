@@ -1,4 +1,3 @@
-
 "use client";
 
 import Image from "next/image";
@@ -24,6 +23,7 @@ export default function Packages() {
               Gym, Swimming Pool, and Playground Prices
             </h2>
           </div>
+
           <span className="hidden text-[9px] uppercase tracking-[0.2em] text-white/30 sm:block">
             Tap to view
           </span>
@@ -44,7 +44,9 @@ export default function Packages() {
             quality={75}
             className="block h-auto w-full"
           />
+
           <div className="absolute inset-0 bg-gradient-to-t from-[#030712]/70 to-transparent" />
+
           <div className="absolute bottom-0 left-0 p-5 text-left sm:p-7 lg:p-8">
             <p className="text-[8px] font-bold tracking-[0.3em] text-blue-300">
               THE CHECKPOINT
@@ -56,6 +58,7 @@ export default function Packages() {
               Tap to view full packages
             </p>
           </div>
+
           <div className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/40 transition group-hover:bg-blue-600">
             <FiArrowUpRight size={18} />
           </div>
@@ -75,19 +78,25 @@ export default function Packages() {
       {showPackage && (
         <div
           className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-3 sm:p-6"
+          style={{ height: "100dvh" }}
           onClick={() => setShowPackage(false)}
         >
           <button
             type="button"
             onClick={() => setShowPackage(false)}
             aria-label="Close package"
-            className="absolute right-4 top-4 z-[1000] flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/70 text-white hover:bg-blue-600"
+            className="fixed right-4 top-[max(1rem,env(safe-area-inset-top))] z-[1001] flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/80 text-white transition hover:bg-blue-600"
           >
             <FiX size={20} />
           </button>
 
           <div
-            className="max-h-[90vh] w-[90vw] max-w-4xl overflow-auto rounded-2xl border border-white/10 bg-[#07101D]"
+            className="flex max-h-full w-full max-w-4xl flex-col overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-[#07101D]"
+            style={{
+              maxHeight:
+                "calc(100dvh - max(1.5rem, env(safe-area-inset-top)) - max(1.5rem, env(safe-area-inset-bottom)))",
+              WebkitOverflowScrolling: "touch",
+            }}
             onClick={(event) => event.stopPropagation()}
           >
             <Image
@@ -95,9 +104,9 @@ export default function Packages() {
               alt="The Checkpoint fitness packages"
               width={1066}
               height={1507}
-              sizes="90vw"
+              sizes="(max-width: 640px) 100vw, 90vw"
               quality={80}
-              className="block h-auto w-full"
+              className="block h-auto w-full shrink-0"
             />
           </div>
         </div>
