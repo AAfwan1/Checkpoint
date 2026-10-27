@@ -150,7 +150,7 @@ export const metadata = {
 
     images: [
       {
-        url: "/view6.jpeg",
+        url: "/logo2.png",
         width: 1200,
         height: 800,
         alt:
@@ -168,7 +168,7 @@ export const metadata = {
     description:
       "Premium gaming, movies, VR, racing simulator, restaurant, gym and swimming experiences in Bashundhara, Dhaka.",
 
-    images: ["/view6.jpeg"],
+    images: ["/logo2.png"],
   },
 };
 
