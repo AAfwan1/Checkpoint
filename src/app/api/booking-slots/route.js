@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import Facility from "@/models/facility";
 import Booking from "@/models/booking";
+import SlotBlock from "@/models/slotBlock";
 
 export const dynamic = "force-dynamic";
 
@@ -108,6 +109,18 @@ function isPlaygroundFacility(facility) {
   );
 }
 
+function getResourceKey(facility, service) {
+  if (isPlaygroundFacility(facility)) {
+    return `playground:${facility._id}`;
+  }
+
+  if (service.exclusive === true) {
+    return `exclusive:${facility._id}:${service._id}`;
+  }
+
+  return `service:${facility._id}:${service._id}`;
+}
+
 function getBookingQuantity(booking) {
   const quantity = Number(booking?.quantity);
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
@@ -125,7 +138,6 @@ async function getBookingsForDate(facilityId, dateRange) {
     .select("_id serviceId serviceName startTime endTime quantity")
     .lean();
 
-  // Parse booking times once instead of once for every slot.
   return bookings.map((booking) => ({
     _id: booking._id,
     serviceId: String(booking.serviceId),
@@ -136,6 +148,46 @@ async function getBookingsForDate(facilityId, dateRange) {
     endMinutes: timeToMinutes(booking.endTime),
     quantity: getBookingQuantity(booking),
   }));
+}
+
+async function getSlotBlocksForDate(
+  facilityId,
+  dateRange,
+  resourceKey
+) {
+  const blocks = await SlotBlock.find({
+    facilityId,
+    bookingDate: {
+      $gte: dateRange.start,
+      $lt: dateRange.end,
+    },
+    resourceKey,
+  })
+    .select("startTime endTime reason")
+    .lean();
+
+  return blocks.map((block) => ({
+    startMinutes: timeToMinutes(block.startTime),
+    endMinutes: timeToMinutes(block.endTime),
+    reason: block.reason || "",
+  }));
+}
+
+function findSlotBlock(slot, blocks) {
+  const start = timeToMinutes(slot.startTime);
+  const end = timeToMinutes(slot.endTime);
+
+  return blocks.find(
+    (block) =>
+      block.startMinutes !== null &&
+      block.endMinutes !== null &&
+      overlaps(
+        start,
+        end,
+        block.startMinutes,
+        block.endMinutes
+      )
+  ) || null;
 }
 
 function getSchedulesForDay(facility, dayOfWeek) {
@@ -369,17 +421,17 @@ function calculateSlotAvailability({ facility, service, slot, bookings }) {
   return calculateCapacityAvailability({ service, slot, bookings });
 }
 
-function buildSlotResponse({ service, slot, availability }) {
+function buildSlotResponse({ service, slot, availability, block }) {
   const capacity = availability.capacity;
 
   return {
     startTime: slot.startTime,
     endTime: slot.endTime,
     durationMinutes: slot.durationMinutes,
-    available: availability.available,
+    available: block ? false : availability.available,
     capacity,
     booked: availability.booked,
-    remaining: availability.remaining,
+    remaining: block ? 0 : availability.remaining,
     price: Number(service.price),
     pricingType: service.pricingType,
     minimumQuantity: Number(service.minimumQuantity || 1),
@@ -388,6 +440,8 @@ function buildSlotResponse({ service, slot, availability }) {
         ? capacity
         : Number(service.maximumQuantity),
     exclusive: Boolean(service.exclusive),
+    blocked: Boolean(block),
+    ...(block?.reason ? { blockReason: block.reason } : {}),
     ...(availability.occupiedBy
       ? { occupiedBy: availability.occupiedBy }
       : {}),
@@ -527,23 +581,34 @@ export async function GET(request) {
       ? generateMovieSlots(schedules)
       : generateStandardSlots(schedules, service);
 
-    const bookings = await getBookingsForDate(
-      facility._id,
-      getDateRange(parsedDate)
-    );
+    const range = getDateRange(parsedDate);
 
-    const responseSlots = slots.map((slot) =>
-      buildSlotResponse({
+    const [bookings, blocks] = await Promise.all([
+      getBookingsForDate(facility._id, range),
+      getSlotBlocksForDate(
+        facility._id,
+        range,
+        getResourceKey(facility, service)
+      ),
+    ]);
+
+    const responseSlots = slots.map((slot) => {
+      const availability = calculateSlotAvailability({
+        facility,
         service,
         slot,
-        availability: calculateSlotAvailability({
-          facility,
-          service,
-          slot,
-          bookings,
-        }),
-      })
-    );
+        bookings,
+      });
+
+      const block = findSlotBlock(slot, blocks);
+
+      return buildSlotResponse({
+        service,
+        slot,
+        availability,
+        block,
+      });
+    });
 
     let availableSlots = 0;
 

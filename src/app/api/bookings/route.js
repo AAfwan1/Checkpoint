@@ -6,6 +6,7 @@ import { connectDB } from "@/lib/mongodb";
 import Facility from "@/models/facility";
 import Booking from "@/models/booking";
 import BookingLock from "@/models/bookingLock";
+import SlotBlock from "@/models/slotBlock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -397,7 +398,6 @@ async function removeExpiredLocks() {
 async function cancelExpiredBookings() {
   const now = new Date();
 
-  // Update in MongoDB without loading expired bookings into Node.js.
   await Booking.updateMany(
     {
       status: "pending",
@@ -476,6 +476,27 @@ async function findExistingBookingsForItem({
   }).select(
     "_id facilityId serviceId serviceName startTime endTime quantity status paymentStatus"
   );
+}
+
+async function findOverlappingSlotBlock({
+  facility,
+  service,
+  date,
+  startTime,
+  endTime,
+}) {
+  return SlotBlock.findOne({
+    facilityId: facility._id,
+    bookingDate: {
+      $gte: getDateStartUtc(date),
+      $lt: getDateEndUtc(date),
+    },
+    resourceKey: getResourceKey(facility, service),
+    startTime: { $lt: endTime },
+    endTime: { $gt: startTime },
+  })
+    .select("_id")
+    .lean();
 }
 
 function calculateExistingQuantity(bookings, serviceId) {
@@ -858,6 +879,23 @@ export async function POST(request) {
       if (!schedule && !isMovieService(service)) {
         return jsonError(
           `${service.name} is not available at ${startTime} on the selected date.`
+        );
+      }
+
+      // Prevent booking a time that an admin has manually blocked.
+      const blockedSlot = await findOverlappingSlotBlock({
+        facility,
+        service,
+        date: item.date,
+        startTime,
+        endTime,
+      });
+
+      if (blockedSlot) {
+        return jsonError(
+          "This booking slot is unavailable. Please choose another time.",
+          409,
+          { code: "BOOKING_CONFLICT" }
         );
       }
 

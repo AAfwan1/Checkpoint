@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   MdAccessTime,
+  MdBlock,
   MdArrowBack,
   MdCalendarMonth,
   MdCheckCircle,
   MdChevronLeft,
   MdChevronRight,
   MdClose,
+  MdLockOpen,
   MdEdit,
   MdEventAvailable,
   MdExpandMore,
@@ -105,6 +107,7 @@ const ICON_COLORS = {
 };
 
 const STATUS_COLORS = {
+  Blocked: "border-orange-400/20 bg-orange-400/10 text-orange-300",
   Full: "border-red-400/20 bg-red-400/10 text-red-300",
   Limited: "border-amber-400/20 bg-amber-400/10 text-amber-300",
   Available: "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
@@ -184,6 +187,8 @@ const formatTime24 = (value) => {
 /* -------------------------------------------------------------------------- */
 
 const getStatus = (slot) => {
+  if (slot?.blocked) return "Blocked";
+
   if (!slot?.available || Number(slot?.remaining) <= 0) {
     return "Full";
   }
@@ -317,9 +322,14 @@ function getFacilityScheduleForDay(facility, dayOfWeek) {
 export default function SchedulePage() {
   const [facilities, setFacilities] = useState([]);
   const [availability, setAvailability] = useState({});
+  const [slotBlocks, setSlotBlocks] = useState({});
   const [selectedDate, setSelectedDate] = useState(() => createDate());
   const [selectedFacility, setSelectedFacility] = useState("all");
   const [editingFacility, setEditingFacility] = useState(null);
+  const [blockTarget, setBlockTarget] = useState(null);
+  const [unblockTarget, setUnblockTarget] = useState(null);
+  const [blockReason, setBlockReason] = useState("");
+  const [savingBlock, setSavingBlock] = useState(false);
 
   const [loadingFacilities, setLoadingFacilities] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -365,11 +375,12 @@ export default function SchedulePage() {
     }
   }, []);
 
-  /* LOAD AVAILABILITY */
+  /* LOAD AVAILABILITY AND BLOCKS */
 
   const loadAvailability = useCallback(async (facilityList, date) => {
     if (!Array.isArray(facilityList) || facilityList.length === 0) {
       setAvailability({});
+      setSlotBlocks({});
       setLoadingSlots(false);
       return;
     }
@@ -385,38 +396,51 @@ export default function SchedulePage() {
           const facilityId = String(facility._id || facility.id);
           const service = getSlotService(facility);
 
-          if (!service) {
-            return { facilityId, data: null };
+          const requests = [
+            fetch(
+              `/api/slot-blocks?facilityId=${encodeURIComponent(
+                facilityId
+              )}&date=${encodeURIComponent(dateString)}`,
+              { method: "GET", cache: "no-store" }
+            ).then(parseJsonResponse),
+          ];
+
+          if (service) {
+            const serviceId = String(service._id || service.id);
+
+            requests.push(
+              fetch(
+                `/api/booking-slots?facilityId=${encodeURIComponent(
+                  facilityId
+                )}&serviceId=${encodeURIComponent(
+                  serviceId
+                )}&date=${encodeURIComponent(dateString)}`,
+                { method: "GET", cache: "no-store" }
+              ).then(parseJsonResponse)
+            );
           }
 
-          const serviceId = String(service._id || service.id);
-
-          const response = await fetch(
-            `/api/booking-slots?facilityId=${encodeURIComponent(
-              facilityId
-            )}&serviceId=${encodeURIComponent(
-              serviceId
-            )}&date=${encodeURIComponent(dateString)}`,
-            {
-              method: "GET",
-              cache: "no-store",
-            }
-          );
+          const results = await Promise.all(requests);
+          const blocksData = results[0];
 
           return {
             facilityId,
-            data: await parseJsonResponse(response),
+            blocks: Array.isArray(blocksData?.blocks) ? blocksData.blocks : [],
+            data: service ? results[1] : null,
           };
         })
       );
 
       const nextAvailability = {};
+      const nextBlocks = {};
 
-      for (const { facilityId, data } of results) {
+      for (const { facilityId, data, blocks } of results) {
         nextAvailability[facilityId] = data;
+        nextBlocks[facilityId] = blocks;
       }
 
       setAvailability(nextAvailability);
+      setSlotBlocks(nextBlocks);
     } catch (requestError) {
       console.error("Failed to load booking availability:", requestError);
 
@@ -489,6 +513,7 @@ export default function SchedulePage() {
           service: data?.service || getSlotService(facility),
           schedule,
           slots,
+          blocks: slotBlocks[facilityId] || [],
           playgroundServices: getPlaygroundServices(facility),
           loading: loadingSlots && !data,
           noSchedule:
@@ -499,7 +524,7 @@ export default function SchedulePage() {
             data?.message?.includes("No active schedule"),
         };
       }),
-    [visibleFacilities, availability, loadingSlots]
+    [visibleFacilities, availability, slotBlocks, loadingSlots]
   );
 
   /* TOAST */
@@ -527,6 +552,84 @@ export default function SchedulePage() {
       showToast("Schedule and availability refreshed.");
     }
   }, [loadFacilities, loadAvailability, selectedDate, showToast]);
+
+  /* BLOCK / UNBLOCK SLOTS */
+
+  const handleBlockSlot = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!blockTarget || savingBlock) return;
+
+      const serviceId = String(
+        blockTarget.service?._id || blockTarget.service?.id || ""
+      );
+
+      if (!serviceId) {
+        setError("No active booking service is available for this facility.");
+        return;
+      }
+
+      try {
+        setSavingBlock(true);
+        setError("");
+
+        const response = await fetch("/api/slot-blocks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            facilityId: blockTarget.facilityId,
+            serviceId,
+            date: formatDateForApi(selectedDate),
+            startTime: blockTarget.slot.startTime,
+            endTime: blockTarget.slot.endTime,
+            reason: blockReason.trim(),
+          }),
+        });
+
+        await parseJsonResponse(response);
+        setBlockTarget(null);
+        setBlockReason("");
+        await loadAvailability(facilities, selectedDate);
+        showToast("Slot blocked successfully.");
+      } catch (requestError) {
+        setError(requestError?.message || "Unable to block this slot.");
+      } finally {
+        setSavingBlock(false);
+      }
+    },
+    [
+      blockTarget,
+      savingBlock,
+      blockReason,
+      facilities,
+      selectedDate,
+      loadAvailability,
+      showToast,
+    ]
+  );
+
+  const handleUnblockSlot = useCallback(async () => {
+    if (!unblockTarget || savingBlock) return;
+
+    try {
+      setSavingBlock(true);
+      setError("");
+
+      const response = await fetch(
+        `/api/slot-blocks?id=${encodeURIComponent(unblockTarget.id)}`,
+        { method: "DELETE" }
+      );
+
+      await parseJsonResponse(response);
+      setUnblockTarget(null);
+      await loadAvailability(facilities, selectedDate);
+      showToast("Slot unblocked successfully.");
+    } catch (requestError) {
+      setError(requestError?.message || "Unable to unblock this slot.");
+    } finally {
+      setSavingBlock(false);
+    }
+  }, [unblockTarget, savingBlock, facilities, selectedDate, loadAvailability, showToast]);
 
   /* SAVE SCHEDULE */
 
@@ -757,6 +860,16 @@ export default function SchedulePage() {
                 facility={facility}
                 onEdit={() => setEditingFacility(facility)}
                 loading={facility.loading}
+                onBlock={(slot) => {
+                  setBlockTarget({
+                    facilityId: facility.id,
+                    service: facility.service,
+                    slot,
+                  });
+                  setBlockReason("");
+                }}
+                onUnblock={(block) => setUnblockTarget(block)}
+                savingBlock={savingBlock}
               />
             ))}
           </section>
@@ -779,6 +892,115 @@ export default function SchedulePage() {
           </div>
         )}
       </main>
+
+      {/* BLOCK SLOT MODAL */}
+
+      {blockTarget && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={handleBlockSlot}
+            className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#07101C] p-5 shadow-2xl shadow-black/60"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-orange-300">
+                  Slot Management
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-white">
+                  Block this slot?
+                </h2>
+                <p className="mt-2 text-sm text-gray-400">{formatDate(selectedDate)}</p>
+                <p className="mt-1 text-sm text-gray-300">
+                  {formatTime24(blockTarget.slot.startTime)} — {formatTime24(blockTarget.slot.endTime)}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={savingBlock}
+                onClick={() => setBlockTarget(null)}
+                aria-label="Close"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-500 hover:bg-white/[0.05] hover:text-white disabled:opacity-50"
+              >
+                <MdClose size={20} />
+              </button>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                Reason (Optional)
+              </span>
+              <textarea
+                value={blockReason}
+                onChange={(event) => setBlockReason(event.target.value.slice(0, 200))}
+                maxLength={200}
+                rows={3}
+                placeholder="e.g. Maintenance or facility closure"
+                disabled={savingBlock}
+                className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.025] p-3 text-sm text-gray-200 outline-none placeholder:text-gray-600 focus:border-blue-500/40 disabled:opacity-50"
+              />
+            </label>
+
+            <p className="mt-3 text-xs leading-5 text-gray-500">
+              Existing bookings cannot be blocked. Removing a block will not delete bookings.
+            </p>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingBlock}
+                onClick={() => setBlockTarget(null)}
+                className="h-10 rounded-xl border border-white/[0.08] px-4 text-sm text-gray-400 hover:bg-white/[0.05] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingBlock}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-orange-500 px-4 text-sm font-semibold text-white transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingBlock ? <MdRefresh size={17} className="animate-spin" /> : <MdBlock size={17} />}
+                {savingBlock ? "Saving..." : "Confirm Block"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* UNBLOCK CONFIRMATION */}
+
+      {unblockTarget && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#07101C] p-5 shadow-2xl shadow-black/60">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">
+              Slot Management
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-white">Remove this block?</h2>
+            <p className="mt-2 text-sm text-gray-400">
+              {formatDate(selectedDate)} · {formatTime24(unblockTarget.startTime)} — {formatTime24(unblockTarget.endTime)}
+            </p>
+            <p className="mt-3 text-xs leading-5 text-gray-500">
+              This only removes the block. It does not delete or modify existing bookings.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingBlock}
+                onClick={() => setUnblockTarget(null)}
+                className="h-10 rounded-xl border border-white/[0.08] px-4 text-sm text-gray-400 hover:bg-white/[0.05] disabled:opacity-50"
+              >Cancel</button>
+              <button
+                type="button"
+                disabled={savingBlock}
+                onClick={handleUnblockSlot}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {savingBlock ? <MdRefresh size={17} className="animate-spin" /> : <MdLockOpen size={17} />}
+                {savingBlock ? "Removing..." : "Unblock Slot"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SCHEDULE EDIT MODAL */}
 
@@ -813,7 +1035,7 @@ export default function SchedulePage() {
 /* FACILITY CARD                                                              */
 /* -------------------------------------------------------------------------- */
 
-function FacilityScheduleCard({ facility, onEdit, loading }) {
+function FacilityScheduleCard({ facility, onEdit, loading, onBlock, onUnblock, savingBlock }) {
   const Icon = facility.icon;
   const slots = facility.slots;
 
@@ -984,13 +1206,35 @@ function FacilityScheduleCard({ facility, onEdit, loading }) {
 
         {slots.length > 0 && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {slots.map((slot) => (
-              <SlotCard
-                key={`${facility.id}-${slot.startTime}-${slot.endTime}`}
-                facility={facility}
-                slot={slot}
-              />
-            ))}
+            {slots.map((slot) => {
+              const slotStart = timeToMinutes(slot.startTime);
+              const slotEnd = timeToMinutes(slot.endTime);
+              const matchingBlock = (facility.blocks || []).find((block) => {
+                const blockStart = timeToMinutes(block.startTime);
+                const blockEnd = timeToMinutes(block.endTime);
+
+                return (
+                  blockStart !== null &&
+                  blockEnd !== null &&
+                  slotStart !== null &&
+                  slotEnd !== null &&
+                  blockStart < slotEnd &&
+                  blockEnd > slotStart
+                );
+              });
+
+              return (
+                <SlotCard
+                  key={`${facility.id}-${slot.startTime}-${slot.endTime}`}
+                  facility={facility}
+                  slot={slot}
+                  block={matchingBlock || null}
+                  onBlock={onBlock}
+                  onUnblock={onUnblock}
+                  savingBlock={savingBlock}
+                />
+              );
+            })}
           </div>
         )}
 
@@ -1019,19 +1263,16 @@ function FacilityScheduleCard({ facility, onEdit, loading }) {
 /* SLOT CARD                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function SlotCard({ facility, slot }) {
-  const status = getStatus(slot);
-
+function SlotCard({ facility, slot, block, onBlock, onUnblock, savingBlock }) {
+  const status = block ? "Blocked" : getStatus(slot);
   const capacity = Number(slot.capacity);
   const booked = Number(slot.booked);
   const remaining = Number(slot.remaining);
 
   const percentage =
-    Number.isFinite(capacity) &&
-    capacity > 0 &&
-    Number.isFinite(booked)
+    Number.isFinite(capacity) && capacity > 0 && Number.isFinite(booked)
       ? Math.min(100, Math.round((booked / capacity) * 100))
-      : status === "Full"
+      : status === "Full" || status === "Blocked"
       ? 100
       : 0;
 
@@ -1041,21 +1282,30 @@ function SlotCard({ facility, slot }) {
       : "--";
 
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.018] p-3.5 transition hover:border-white/[0.1] hover:bg-white/[0.025]">
+    <div
+      className={`rounded-xl border p-3.5 transition ${
+        block
+          ? "border-orange-400/20 bg-orange-400/[0.035]"
+          : "border-white/[0.06] bg-white/[0.018] hover:border-white/[0.1] hover:bg-white/[0.025]"
+      }`}
+    >
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-gray-200">{timeLabel}</p>
-
-          {slot.occupiedBy && (
+          {block ? (
+            <p className="mt-1 text-[10px] text-orange-300">
+              {block.reason || "Manually blocked"}
+            </p>
+          ) : slot.occupiedBy ? (
             <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-red-400">
               {slot.occupiedBy.serviceName || "Occupied"}
             </p>
-          )}
+          ) : null}
         </div>
 
         <span
           className={`rounded-full border px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] ${
-            STATUS_COLORS[status]
+            STATUS_COLORS[status] || STATUS_COLORS.Full
           }`}
         >
           {status}
@@ -1073,7 +1323,6 @@ function SlotCard({ facility, slot }) {
               ? "Seats"
               : "Capacity"}
           </span>
-
           <span className="font-medium text-gray-400">
             {Number.isFinite(booked) ? booked : 0}/
             {Number.isFinite(capacity) ? capacity : "--"}
@@ -1083,7 +1332,7 @@ function SlotCard({ facility, slot }) {
         <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
           <div
             className={`h-full rounded-full transition-all ${
-              status === "Full"
+              block || status === "Full"
                 ? "bg-red-400"
                 : status === "Limited"
                 ? "bg-amber-400"
@@ -1097,15 +1346,29 @@ function SlotCard({ facility, slot }) {
           <span className="text-gray-600">Remaining</span>
           <span
             className={
-              remaining > 0
+              !block && remaining > 0
                 ? "font-medium text-gray-400"
                 : "font-medium text-red-400"
             }
           >
-            {Number.isFinite(remaining) ? remaining : 0}
+            {block ? 0 : Number.isFinite(remaining) ? remaining : 0}
           </span>
         </div>
       </div>
+
+      <button
+        type="button"
+        disabled={savingBlock || (!block && (!slot.startTime || !slot.endTime))}
+        onClick={() => (block ? onUnblock(block) : onBlock(slot))}
+        className={`mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+          block
+            ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300 hover:bg-emerald-400/10"
+            : "border-orange-400/20 bg-orange-400/[0.04] text-orange-300 hover:bg-orange-400/10"
+        }`}
+      >
+        {block ? <MdLockOpen size={16} /> : <MdBlock size={16} />}
+        {block ? "Unblock Slot" : "Block Slot"}
+      </button>
     </div>
   );
 }

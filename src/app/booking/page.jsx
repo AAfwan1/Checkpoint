@@ -76,7 +76,6 @@ const FACILITY_UI = [
 const OPEN_TIME = "11:00";
 const CLOSE_TIME = "23:00";
 const DHAKA_TIME_ZONE = "Asia/Dhaka";
-const MINIMUM_SEATS_TO_BOOK = 50;
 
 function formatPrice(value) {
   const number = Number(value);
@@ -351,21 +350,19 @@ function getMaximumQuantity(service, { ignoreCapacity = false } = {}) {
     : null;
 }
 
-function hasMinimumSeatsRemaining(slot) {
+function hasMinimumQuantityRemaining(slot, service) {
   const remaining = Number(slot?.remaining);
+  const minimum = getMinimumQuantity(service);
 
-  return (
-    Number.isFinite(remaining) &&
-    remaining >= MINIMUM_SEATS_TO_BOOK
-  );
+  return Number.isFinite(remaining) && remaining >= minimum;
 }
 
-function isSlotUnavailable(slot) {
+function isSlotUnavailable(slot, service) {
   return (
     !slot ||
     slot.available === false ||
     slot.status === "full" ||
-    !hasMinimumSeatsRemaining(slot)
+    !hasMinimumQuantityRemaining(slot, service)
   );
 }
 
@@ -776,7 +773,7 @@ export default function BookingPage() {
     visibleAvailabilitySlots.some(
       (slot) =>
         slot.startTime === selectedSlot &&
-        !isSlotUnavailable(slot)
+        !isSlotUnavailable(slot, selectedService)
     );
 
   const canAdd = Boolean(
@@ -941,7 +938,7 @@ export default function BookingPage() {
         item.endTime === slot?.endTime
     );
 
-    if (!isVisible || isSlotUnavailable(slot)) {
+    if (!isVisible || isSlotUnavailable(slot, selectedService)) {
       return;
     }
 
@@ -983,7 +980,7 @@ export default function BookingPage() {
       ? visibleAvailabilitySlots.find(
           (item) =>
             item.startTime === selectedSlot &&
-            !isSlotUnavailable(item)
+            !isSlotUnavailable(item, selectedService)
         )
       : null;
 
@@ -1686,7 +1683,7 @@ export default function BookingPage() {
                   ) : (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {visibleAvailabilitySlots.map((slot) => {
-                        const full = isSlotUnavailable(slot);
+                        const full = isSlotUnavailable(slot, selectedService);
 
                         const active = selectedSlot === slot.startTime;
 
