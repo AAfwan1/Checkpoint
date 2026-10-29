@@ -5,6 +5,7 @@ import { connectDB } from "@/lib/mongodb";
 import { requireAdmin } from "@/lib/requireAdmin";
 import Booking from "@/models/booking";
 import Payment from "@/models/payment";
+import BookingLock from "@/models/bookingLock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -504,11 +505,18 @@ export async function DELETE(request) {
 
       deletedPaymentsCount = paymentResult.deletedCount || 0;
 
+            await BookingLock.deleteMany(
+              { bookingId: booking._id },
+              { session }
+            );
+
       // Delete only the selected booking
       const bookingResult = await Booking.deleteOne(
         { _id: booking._id },
         { session }
       );
+
+
 
       if (bookingResult.deletedCount !== 1) {
         throw new Error("Booking deletion failed.");
