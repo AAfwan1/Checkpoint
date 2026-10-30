@@ -1,19 +1,18 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  FiArrowUpRight,
+  FiAlertTriangle,
   FiCalendar,
   FiChevronDown,
   FiClock,
+  FiEdit2,
   FiEye,
   FiFilter,
   FiRefreshCw,
   FiSearch,
   FiTrash2,
-  FiAlertTriangle,
   FiUsers,
   FiX,
 } from "react-icons/fi";
@@ -191,7 +190,7 @@ function FilterSelect({ value, onChange, options }) {
 
 function normalizeBooking(booking) {
   return {
-    id: booking.id || "",
+    id: booking.id || booking._id || "",
     bookingReference: booking.bookingReference || "",
     bookingGroupReference: booking.bookingGroupReference || "",
     customer: booking.customer?.name || "Unknown customer",
@@ -216,17 +215,35 @@ function normalizeBooking(booking) {
   };
 }
 
+function canReschedule(booking) {
+  return (
+    booking.status === "Confirmed" &&
+    booking.payment === "Paid" &&
+    !booking.checkedIn &&
+    !booking.checkedOut
+  );
+}
+
 export default function AdminBookingsPage() {
   const [search, setSearch] = useState("");
   const [facility, setFacility] = useState("All Facilities");
   const [status, setStatus] = useState("All Statuses");
   const [paymentStatus, setPaymentStatus] = useState("All Payments");
   const [date, setDate] = useState("");
+
   const [bookings, setBookings] = useState([]);
   const [selectedBooking, setSelectedBooking] = useState(null);
+
   const [bookingToDelete, setBookingToDelete] = useState(null);
   const [deletingBooking, setDeletingBooking] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+
+  const [rescheduleBooking, setRescheduleBooking] = useState(null);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState("");
+  const [rescheduling, setRescheduling] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -290,7 +307,6 @@ export default function AdminBookingsPage() {
         if (fetchError?.name === "AbortError") return;
 
         console.error("Admin booking fetch error:", fetchError);
-
         setError(fetchError?.message || "Unable to load bookings.");
       } finally {
         if (silent) {
@@ -329,22 +345,118 @@ export default function AdminBookingsPage() {
   }, [bookings, facility]);
 
   const totalRevenue = useMemo(
-    () => filteredBookings.reduce((total, booking) => total + booking.amount, 0),
+    () =>
+      filteredBookings.reduce(
+        (total, booking) => total + booking.amount,
+        0
+      ),
     [filteredBookings]
   );
 
   const confirmedCount = useMemo(
-    () => filteredBookings.filter((booking) => booking.status === "Confirmed").length,
+    () =>
+      filteredBookings.filter(
+        (booking) => booking.status === "Confirmed"
+      ).length,
     [filteredBookings]
   );
 
   const pendingCount = useMemo(
-    () => filteredBookings.filter((booking) => booking.status === "Pending").length,
+    () =>
+      filteredBookings.filter(
+        (booking) => booking.status === "Pending"
+      ).length,
     [filteredBookings]
   );
 
   const handleRefresh = () => {
     if (!refreshing) fetchBookings({ silent: true });
+  };
+
+  // Open the reschedule modal.
+  const openRescheduleModal = (booking) => {
+    if (!canReschedule(booking)) return;
+
+    setRescheduleError("");
+    setRescheduleBooking(booking);
+    setRescheduleDate(booking.date || "");
+    setRescheduleTime(booking.startTime || "");
+  };
+
+  const closeRescheduleModal = () => {
+    if (rescheduling) return;
+
+    setRescheduleBooking(null);
+    setRescheduleDate("");
+    setRescheduleTime("");
+    setRescheduleError("");
+  };
+
+  // Submit the new date and time to the reschedule API.
+  const handleRescheduleBooking = async (event) => {
+    event.preventDefault();
+
+    if (!rescheduleBooking?.id || rescheduling) return;
+
+    if (!rescheduleDate || !rescheduleTime) {
+      setRescheduleError("Please select a date and start time.");
+      return;
+    }
+
+    try {
+      setRescheduling(true);
+      setRescheduleError("");
+
+      const response = await fetch("/api/bookings/admin/reschedule", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          bookingId: rescheduleBooking.id,
+          date: rescheduleDate,
+          startTime: rescheduleTime,
+        }),
+      });
+
+      let data;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("Invalid response from the reschedule API.");
+      }
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error || data?.message || "Unable to reschedule booking."
+        );
+      }
+
+      const updatedBookingId = rescheduleBooking.id;
+
+      setRescheduleBooking(null);
+      setRescheduleDate("");
+      setRescheduleTime("");
+      setSelectedBooking((current) =>
+        current?.id === updatedBookingId ? null : current
+      );
+
+      await fetchBookings({ silent: true });
+    } catch (rescheduleRequestError) {
+      console.error(
+        "Admin booking reschedule error:",
+        rescheduleRequestError
+      );
+
+      setRescheduleError(
+        rescheduleRequestError?.message ||
+          "Unable to reschedule booking."
+      );
+    } finally {
+      setRescheduling(false);
+    }
   };
 
   const handleDeleteBooking = async () => {
@@ -388,6 +500,7 @@ export default function AdminBookingsPage() {
       setLastUpdated(new Date());
     } catch (deleteRequestError) {
       console.error("Admin booking delete error:", deleteRequestError);
+
       setDeleteError(
         deleteRequestError?.message || "Unable to delete booking."
       );
@@ -431,8 +544,13 @@ export default function AdminBookingsPage() {
 
           <div className="rounded-2xl border border-white/10 bg-[#07101D] p-8">
             <div className="flex min-h-[300px] flex-col items-center justify-center">
-              <FiRefreshCw size={25} className="animate-spin text-blue-400" />
-              <p className="mt-4 text-sm text-white/50">Loading bookings...</p>
+              <FiRefreshCw
+                size={25}
+                className="animate-spin text-blue-400"
+              />
+              <p className="mt-4 text-sm text-white/50">
+                Loading bookings...
+              </p>
             </div>
           </div>
         </div>
@@ -500,7 +618,7 @@ export default function AdminBookingsPage() {
           </section>
         )}
 
-        {/* Remaining summary cards */}
+        {/* Summary cards */}
         <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-[#07101D] p-5">
             <div className="flex items-center justify-between">
@@ -559,9 +677,23 @@ export default function AdminBookingsPage() {
               />
             </div>
 
-            <FilterSelect value={facility} onChange={setFacility} options={FACILITIES} />
-            <FilterSelect value={status} onChange={setStatus} options={STATUSES} />
-            <FilterSelect value={paymentStatus} onChange={setPaymentStatus} options={PAYMENT_STATUSES} />
+            <FilterSelect
+              value={facility}
+              onChange={setFacility}
+              options={FACILITIES}
+            />
+
+            <FilterSelect
+              value={status}
+              onChange={setStatus}
+              options={STATUSES}
+            />
+
+            <FilterSelect
+              value={paymentStatus}
+              onChange={setPaymentStatus}
+              options={PAYMENT_STATUSES}
+            />
 
             <div className="relative">
               <FiCalendar
@@ -632,12 +764,16 @@ export default function AdminBookingsPage() {
           {filteredBookings.length === 0 ? (
             <div className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.015] px-6 text-center">
               <FiCalendar size={28} className="text-white/20" />
+
               <h3 className="mt-4 text-sm font-semibold text-white">
                 No bookings found
               </h3>
+
               <p className="mt-1 max-w-sm text-xs leading-5 text-white/35">
-                Try changing your search or filters to find the booking you are looking for.
+                Try changing your search or filters to find the booking you
+                are looking for.
               </p>
+
               <button
                 type="button"
                 onClick={resetFilters}
@@ -649,7 +785,7 @@ export default function AdminBookingsPage() {
           ) : (
             <div className="overflow-x-auto">
               <div className="min-w-[1100px]">
-                <div className="grid grid-cols-[125px_minmax(170px,1.2fr)_minmax(190px,1.4fr)_175px_80px_125px_80px] gap-4 border-b border-white/10 px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                <div className="grid grid-cols-[125px_minmax(170px,1.2fr)_minmax(190px,1.4fr)_175px_80px_125px_112px] gap-4 border-b border-white/10 px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                   <span>Booking ID</span>
                   <span>Customer</span>
                   <span>Service</span>
@@ -663,12 +799,13 @@ export default function AdminBookingsPage() {
                   {filteredBookings.map((booking) => (
                     <div
                       key={booking.id}
-                      className="grid grid-cols-[125px_minmax(170px,1.2fr)_minmax(190px,1.4fr)_175px_80px_125px_80px] items-center gap-4 px-3 py-4 transition hover:bg-white/[0.015]"
+                      className="grid grid-cols-[125px_minmax(170px,1.2fr)_minmax(190px,1.4fr)_175px_80px_125px_112px] items-center gap-4 px-3 py-4 transition hover:bg-white/[0.015]"
                     >
                       <div>
                         <span className="text-xs font-semibold text-blue-400">
                           #{booking.bookingReference || booking.id}
                         </span>
+
                         {booking.status === "Pending" && (
                           <span className="mt-1 block text-[9px] uppercase tracking-wider text-amber-400/60">
                             New
@@ -712,12 +849,28 @@ export default function AdminBookingsPage() {
                         <p className="text-sm font-medium text-white/75">
                           {formatCurrency(booking.amount)}
                         </p>
-                        <p className={`mt-1 text-[10px] ${getPaymentClasses(booking.payment)}`}>
+                        <p
+                          className={`mt-1 text-[10px] ${getPaymentClasses(
+                            booking.payment
+                          )}`}
+                        >
                           {booking.payment}
                         </p>
                       </div>
 
                       <div className="flex justify-end gap-1">
+                        {canReschedule(booking) && (
+                          <button
+                            type="button"
+                            onClick={() => openRescheduleModal(booking)}
+                            aria-label={`Reschedule ${booking.bookingReference || booking.id}`}
+                            title="Reschedule booking"
+                            className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-400/15 bg-blue-400/[0.04] text-blue-300/70 transition hover:border-blue-400/40 hover:bg-blue-400/10 hover:text-blue-300"
+                          >
+                            <FiEdit2 size={15} />
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => setSelectedBooking(booking)}
@@ -727,6 +880,7 @@ export default function AdminBookingsPage() {
                         >
                           <FiEye size={15} />
                         </button>
+
                         <button
                           type="button"
                           onClick={() => {
@@ -765,6 +919,7 @@ export default function AdminBookingsPage() {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-400">
                   Booking Details
                 </p>
+
                 <h2 className="mt-2 text-xl font-semibold text-white">
                   #{selectedBooking.bookingReference || selectedBooking.id}
                 </h2>
@@ -805,6 +960,7 @@ export default function AdminBookingsPage() {
                     {selectedBooking.facility}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Service
@@ -813,6 +969,7 @@ export default function AdminBookingsPage() {
                     {selectedBooking.service}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Date
@@ -821,6 +978,7 @@ export default function AdminBookingsPage() {
                     {formatDate(selectedBooking.date)}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Time
@@ -829,6 +987,7 @@ export default function AdminBookingsPage() {
                     {selectedBooking.time}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Duration
@@ -837,6 +996,7 @@ export default function AdminBookingsPage() {
                     {selectedBooking.duration}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Guests
@@ -875,10 +1035,15 @@ export default function AdminBookingsPage() {
                 <div className="mt-3 grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-[10px] text-white/25">Status</p>
-                    <p className={`mt-1 text-sm ${getPaymentClasses(selectedBooking.payment)}`}>
+                    <p
+                      className={`mt-1 text-sm ${getPaymentClasses(
+                        selectedBooking.payment
+                      )}`}
+                    >
                       {selectedBooking.payment}
                     </p>
                   </div>
+
                   <div>
                     <p className="text-[10px] text-white/25">Method</p>
                     <p className="mt-1 text-sm text-white/60">
@@ -910,10 +1075,19 @@ export default function AdminBookingsPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${getStatusClasses(selectedBooking.status)}`}>
+                  <span
+                    className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${getStatusClasses(
+                      selectedBooking.status
+                    )}`}
+                  >
                     {selectedBooking.status}
                   </span>
-                  <span className={`rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] font-semibold ${getPaymentClasses(selectedBooking.payment)}`}>
+
+                  <span
+                    className={`rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] font-semibold ${getPaymentClasses(
+                      selectedBooking.payment
+                    )}`}
+                  >
                     {selectedBooking.payment}
                   </span>
                 </div>
@@ -925,15 +1099,20 @@ export default function AdminBookingsPage() {
                     Check-in
                   </p>
                   <p className="mt-2 text-sm text-white/60">
-                    {selectedBooking.checkedIn ? "Checked in" : "Not checked in"}
+                    {selectedBooking.checkedIn
+                      ? "Checked in"
+                      : "Not checked in"}
                   </p>
                 </div>
+
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
                     Check-out
                   </p>
                   <p className="mt-2 text-sm text-white/60">
-                    {selectedBooking.checkedOut ? "Checked out" : "Not checked out"}
+                    {selectedBooking.checkedOut
+                      ? "Checked out"
+                      : "Not checked out"}
                   </p>
                 </div>
               </div>
@@ -948,7 +1127,177 @@ export default function AdminBookingsPage() {
                   </p>
                 </div>
               )}
+
+              {canReschedule(selectedBooking) && (
+                <div className="border-t border-white/10 pt-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const booking = selectedBooking;
+                      setSelectedBooking(null);
+                      openRescheduleModal(booking);
+                    }}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 text-sm font-medium text-blue-300 transition hover:border-blue-400/40 hover:bg-blue-500/15"
+                  >
+                    <FiEdit2 size={15} />
+                    Reschedule Booking
+                  </button>
+                </div>
+              )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reschedule booking modal */}
+      {rescheduleBooking && (
+        <div
+          className="fixed inset-0 z-[55] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !rescheduling
+            ) {
+              closeRescheduleModal();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reschedule-booking-title"
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#07101D] shadow-2xl"
+          >
+            <div className="flex items-start justify-between border-b border-white/10 p-5 sm:p-6">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-400">
+                  Booking Management
+                </p>
+
+                <h2
+                  id="reschedule-booking-title"
+                  className="mt-2 text-xl font-semibold text-white"
+                >
+                  Reschedule Booking
+                </h2>
+
+                <p className="mt-1 text-xs text-white/40">
+                  #{rescheduleBooking.bookingReference || rescheduleBooking.id}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={rescheduling}
+                onClick={closeRescheduleModal}
+                aria-label="Close reschedule modal"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/5 hover:text-white disabled:opacity-40"
+              >
+                <FiX size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleRescheduleBooking}
+              className="space-y-5 p-5 sm:p-6"
+            >
+              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
+                <p className="text-xs font-medium text-white/75">
+                  {rescheduleBooking.customer}
+                </p>
+                <p className="mt-1 text-xs text-white/40">
+                  {rescheduleBooking.service} · {rescheduleBooking.facility}
+                </p>
+                <p className="mt-1 text-xs text-white/40">
+                  Current schedule: {formatDate(rescheduleBooking.date)} ·{" "}
+                  {rescheduleBooking.time}
+                </p>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="reschedule-date"
+                  className="mb-2 block text-xs font-medium text-white/60"
+                >
+                  New date
+                </label>
+
+                <input
+                  id="reschedule-date"
+                  type="date"
+                  required
+                  value={rescheduleDate}
+                  onChange={(event) =>
+                    setRescheduleDate(event.target.value)
+                  }
+                  disabled={rescheduling}
+                  className="h-11 w-full [&::-webkit-calendar-picker-indicator]:invert rounded-xl border border-white/10 bg-[#050A14] px-3 text-sm text-white outline-none transition focus:border-blue-400/40 disabled:opacity-50"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="reschedule-time"
+                  className="mb-2 block text-xs font-medium text-white/60"
+                >
+                  New start time
+                </label>
+
+                <input
+                  id="reschedule-time"
+                  type="time"
+                  required
+                  value={rescheduleTime}
+                  onChange={(event) =>
+                    setRescheduleTime(event.target.value)
+                  }
+                  disabled={rescheduling}
+                  className="h-11 w-full rounded-xl border border-white/10 bg-[#050A14] px-3 text-sm text-white outline-none transition focus:border-blue-400/40 disabled:opacity-50 [&::-webkit-calendar-picker-indicator]:invert"
+                />
+              </div>
+
+              <p className="text-xs leading-5 text-white/35">
+                The booking will keep its existing payment and price. The
+                new date and time will be checked against availability.
+              </p>
+
+              {rescheduleError && (
+                <div className="rounded-xl border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-sm text-red-300">
+                  {rescheduleError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  disabled={rescheduling}
+                  onClick={closeRescheduleModal}
+                  className="inline-flex h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm font-medium text-white/65 transition hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={
+                    rescheduling || !rescheduleDate || !rescheduleTime
+                  }
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-blue-400/25 bg-blue-500/15 px-4 text-sm font-semibold text-blue-200 transition hover:border-blue-400/40 hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {rescheduling ? (
+                    <>
+                      <FiRefreshCw size={14} className="animate-spin" />
+                      Rescheduling...
+                    </>
+                  ) : (
+                    <>
+                      <FiEdit2 size={14} />
+                      Confirm Reschedule
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -958,7 +1307,10 @@ export default function AdminBookingsPage() {
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !deletingBooking) {
+            if (
+              event.target === event.currentTarget &&
+              !deletingBooking
+            ) {
               setBookingToDelete(null);
               setDeleteError("");
             }
@@ -975,18 +1327,28 @@ export default function AdminBookingsPage() {
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-400/10 text-red-300">
                 <FiAlertTriangle size={20} />
               </div>
+
               <div className="min-w-0 flex-1">
-                <h2 id="delete-booking-title" className="text-base font-semibold text-white">
+                <h2
+                  id="delete-booking-title"
+                  className="text-base font-semibold text-white"
+                >
                   Permanently delete booking?
                 </h2>
-                <p id="delete-booking-description" className="mt-2 text-sm leading-6 text-white/50">
+
+                <p
+                  id="delete-booking-description"
+                  className="mt-2 text-sm leading-6 text-white/50"
+                >
                   This permanently removes booking{" "}
                   <span className="font-semibold text-white/80">
-                    #{bookingToDelete.bookingReference || bookingToDelete.id}
+                    #
+                    {bookingToDelete.bookingReference || bookingToDelete.id}
                   </span>{" "}
                   from the database. This action cannot be undone.
                 </p>
               </div>
+
               <button
                 type="button"
                 disabled={deletingBooking}
@@ -1004,7 +1366,8 @@ export default function AdminBookingsPage() {
             <div className="space-y-4 p-5 sm:p-6">
               <div className="rounded-xl border border-red-400/10 bg-red-400/[0.04] p-3">
                 <p className="text-xs leading-5 text-red-200/75">
-                  Associated payment records may also be permanently deleted. No refund will be issued.
+                  Associated payment records may also be permanently
+                  deleted. No refund will be issued.
                 </p>
               </div>
 
@@ -1026,6 +1389,7 @@ export default function AdminBookingsPage() {
                 >
                   Keep booking
                 </button>
+
                 <button
                   type="button"
                   disabled={deletingBooking}
