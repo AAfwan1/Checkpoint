@@ -6,22 +6,21 @@ import { useState } from "react";
 import { FiX, FiMaximize2 } from "react-icons/fi";
 import { gallerySections } from "@/generated/gallery-data";
 
-const cloudinaryUrl = (url, width) =>
-  url?.includes("/upload/")
-    ? url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`)
-    : url;
-
 export default function Gallery() {
   const [selectedImage, setSelectedImage] = useState(null);
 
   return (
     <>
-      <section id="gallery" className="bg-[#030712] px-4 py-20 text-white sm:px-6 lg:px-8">
+      <section
+        id="gallery"
+        className="bg-[#030712] px-4 py-20 text-white sm:px-6 lg:px-8"
+      >
         <div className="mx-auto max-w-7xl">
           <header className="mb-12 text-center">
             <p className="mb-3 text-sm font-medium uppercase tracking-[0.25em] text-blue-400">
               Explore The Checkpoint Gallery
             </p>
+
             <h2 className="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
               See What Awaits You
             </h2>
@@ -33,7 +32,9 @@ export default function Gallery() {
                 {section.routes.map((route) => (
                   <div key={route.folder}>
                     <h3 className="pb-10 text-xl font-black uppercase tracking-[0.1em] text-blue-400 sm:text-2xl">
-                      {route.folder.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())}
+                      {route.folder
+                        .replace(/-/g, " ")
+                        .replace(/\b\w/g, (char) => char.toUpperCase())}
                     </h3>
 
                     <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:gap-4">
@@ -43,7 +44,7 @@ export default function Gallery() {
                           type="button"
                           onClick={() =>
                             setSelectedImage({
-                              src: cloudinaryUrl(image, 1600),
+                              src: image,
                               title: route.folder,
                             })
                           }
@@ -51,14 +52,16 @@ export default function Gallery() {
                           className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-white/10 bg-[#080f1c] focus:outline-none focus:ring-2 focus:ring-blue-500/60 sm:rounded-xl"
                         >
                           <Image
-                            src={cloudinaryUrl(image, 480)}
+                            src={image}
                             alt={`${route.folder} ${index + 1}`}
                             fill
                             sizes="(max-width: 640px) 33vw, (max-width: 1024px) 30vw, 400px"
                             quality={70}
                             className="object-cover"
                           />
+
                           <div className="pointer-events-none absolute inset-0 transition-colors sm:group-hover:bg-black/25" />
+
                           <div className="pointer-events-none absolute right-2 top-2 hidden h-7 w-7 items-center justify-center rounded-full bg-black/50 sm:flex sm:opacity-0 sm:group-hover:opacity-100">
                             <FiMaximize2 size={13} />
                           </div>

@@ -6,8 +6,7 @@ import { useState } from "react";
 import { FiArrowUpRight, FiX } from "react-icons/fi";
 
 const PACKAGE_IMAGE =
-  "https://res.cloudinary.com/qds5td8c/image/upload/v1792603506/the-checkpoint/packeges.jpg";
-
+  "https://checkpoint-media.b-cdn.net/the-checkpoint/others/1.webp";
 export default function Packages() {
   const [showPackage, setShowPackage] = useState(false);
 

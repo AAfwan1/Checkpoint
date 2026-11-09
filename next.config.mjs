@@ -10,6 +10,10 @@ const nextConfig = {
         protocol: "https",
         hostname: "res.cloudinary.com",
       },
+      {
+        protocol: "https",
+        hostname: "checkpoint-media.b-cdn.net",
+      },
     ],
   },
 };

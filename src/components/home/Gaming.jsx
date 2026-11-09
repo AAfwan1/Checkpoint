@@ -8,17 +8,17 @@ import { gaming } from "@/generated/gallery-data";
 
 const menuImages = [
   {
-    src: gaming.images.find((image) => image.includes("/pricelist.jpg")),
+    src: gaming.images.find((image) => image.includes("/3.webp")),
     alt: "The Checkpoint gaming prices and session rates in Bashundhara Dhaka",
     label: "GAME PRICING",
   },
   {
-    src: gaming.images.find((image) => image.includes("/newps5.webp")),
+    src: gaming.images.find((image) => image.includes("/2.webp")),
     alt: "The Checkpoint PS5 games list",
     label: "PS5 GAME LIST",
   },
   {
-    src: gaming.images.find((image) => image.includes("/newothergames.webp")),
+    src: gaming.images.find((image) => image.includes("/1.webp")),
     alt: "The Checkpoint other gaming games list",
     label: "OTHER GAMES",
   },

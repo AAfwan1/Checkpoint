@@ -37,7 +37,7 @@ const FACILITY_UI = [
     title: "Gym",
     label: "FITNESS",
     image:
-      "https://res.cloudinary.com/qds5td8c/image/upload/v1790708321/Checkpoint/gym-steamBath/02.webp",
+      "https://checkpoint-media.b-cdn.net/Checkpoint-Pictures-Optimized/gym%20%26%20steam%20Bath/2.webp",
   },
   {
     key: "pool",
@@ -45,7 +45,7 @@ const FACILITY_UI = [
     title: "Swimming Pool",
     label: "SWIMMING",
     image:
-      "https://res.cloudinary.com/qds5td8c/image/upload/v1790701391/the-checkpoint/Checkpoint-Pictures-Optimized/swimming-pool/01.webp",
+      "https://checkpoint-media.b-cdn.net/Checkpoint-Pictures-Optimized/swimming-pool/1.webp",
   },
   {
     key: "steam",
@@ -53,7 +53,7 @@ const FACILITY_UI = [
     title: "Steam Bath",
     label: "PRIVATE SESSION",
     image:
-      "https://res.cloudinary.com/qds5td8c/image/upload/v1790708325/Checkpoint/gym-steamBath/05.webp",
+      "https://checkpoint-media.b-cdn.net/Checkpoint-Pictures-Optimized/gym%20%26%20steam%20Bath/1.webp",
   },
   {
     key: "playground",
@@ -61,7 +61,7 @@ const FACILITY_UI = [
     title: "Playground",
     label: "SPORTS",
     image:
-      "https://res.cloudinary.com/qds5td8c/image/upload/v1790701377/the-checkpoint/Checkpoint-Pictures-Optimized/playground/11301219-50b4-43a2-9f0f-45ac4475f40e.jpg",
+      "https://checkpoint-media.b-cdn.net/Checkpoint-Pictures-Optimized/playground/1.webp",
   },
   {
     key: "movie",
@@ -69,7 +69,7 @@ const FACILITY_UI = [
     title: "Private Cinema",
     label: "PRIVATE VIEWING",
     image:
-      "https://res.cloudinary.com/qds5td8c/image/upload/v1790701371/the-checkpoint/Checkpoint-Pictures-Optimized/Movie-Theater/01.webp",
+      "https://checkpoint-media.b-cdn.net/Checkpoint-Pictures-Optimized/Movie-Theater/1.webp",
   },
 ];
 
