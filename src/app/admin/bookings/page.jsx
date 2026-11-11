@@ -229,6 +229,7 @@ export default function AdminBookingsPage() {
   const [facility, setFacility] = useState("All Facilities");
   const [status, setStatus] = useState("All Statuses");
   const [paymentStatus, setPaymentStatus] = useState("All Payments");
+  const [dateFilterType, setDateFilterType] = useState("date");
   const [date, setDate] = useState("");
 
   const [bookings, setBookings] = useState([]);
@@ -274,7 +275,7 @@ export default function AdminBookingsPage() {
           params.set("paymentStatus", paymentStatus.toLowerCase());
         }
 
-        if (date) params.set("date", date);
+        if (date) params.set(dateFilterType, date);
 
         const response = await fetch(
           `/api/bookings/admin?${params.toString()}`,
@@ -316,7 +317,7 @@ export default function AdminBookingsPage() {
         }
       }
     },
-    [date, paymentStatus, search, status]
+    [date, dateFilterType, paymentStatus, search, status]
   );
 
   useEffect(() => {
@@ -515,6 +516,7 @@ export default function AdminBookingsPage() {
     setStatus("All Statuses");
     setPaymentStatus("All Payments");
     setDate("");
+    setDateFilterType("date");
   };
 
   if (loading && bookings.length === 0) {
@@ -695,17 +697,41 @@ export default function AdminBookingsPage() {
               options={PAYMENT_STATUSES}
             />
 
-            <div className="relative">
-              <FiCalendar
-                size={15}
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/25"
-              />
-              <input
-                type="date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-                className="h-11 w-full rounded-xl border border-white/10 bg-[#07101D] pl-10 pr-3 text-sm text-white/70 outline-none transition focus:border-blue-400/30"
-              />
+            <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1">
+                <select
+                  value={dateFilterType}
+                  onChange={(event) => {
+                    setDateFilterType(event.target.value);
+                    setDate("");
+                  }}
+                  className="h-11 w-full appearance-none rounded-xl border border-white/10 bg-[#07101D] px-3 pr-8 text-sm text-white/70 outline-none transition focus:border-blue-400/30"
+                >
+                  <option value="date" className="bg-[#07101D] text-white">
+                    Select Date
+                  </option>
+                  <option value="month" className="bg-[#07101D] text-white">
+                    Select Month
+                  </option>
+                </select>
+                <FiChevronDown
+                  size={15}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/30"
+                />
+              </div>
+
+              <div className="relative min-w-0 flex-1">
+                <FiCalendar
+                  size={15}
+                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/25"
+                />
+                <input
+                  type={dateFilterType === "month" ? "month" : "date"}
+                  value={date}
+                  onChange={(event) => setDate(event.target.value)}
+                  className="h-11 w-full min-w-0 rounded-xl border border-white/10 bg-[#07101D] pl-10 pr-2 text-sm text-white/70 outline-none transition focus:border-blue-400/30"
+                />
+              </div>
             </div>
 
             <button

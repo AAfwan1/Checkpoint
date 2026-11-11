@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 
 import { connectDB } from "@/lib/mongodb";
 import { requireAdmin } from "@/lib/requireAdmin";
+
 import Booking from "@/models/booking";
 import Payment from "@/models/payment";
 import BookingLock from "@/models/bookingLock";
@@ -69,7 +70,6 @@ function getEndDate(date) {
 function serializeBooking(booking) {
   return {
     id: booking._id.toString(),
-
     bookingReference: booking.bookingReference,
     bookingGroupReference: booking.bookingGroupReference,
 
@@ -93,52 +93,30 @@ function serializeBooking(booking) {
     startTime: booking.startTime,
     endTime: booking.endTime,
     durationMinutes: booking.durationMinutes,
-
     quantity: booking.quantity,
-
     movieName: booking.movieName || "",
-
     priceAtBooking: booking.priceAtBooking,
     totalAmount: booking.totalAmount,
-
     status: booking.status,
     paymentStatus: booking.paymentStatus,
 
-    paymentTransactionId:
-      booking.paymentTransactionId || "",
+    paymentTransactionId: booking.paymentTransactionId || "",
+    paymentValidationId: booking.paymentValidationId || "",
+    paymentBankTransactionId: booking.paymentBankTransactionId || "",
+    paymentCardType: booking.paymentCardType || "",
+    paymentMethod: booking.paymentMethod || "",
 
-    paymentValidationId:
-      booking.paymentValidationId || "",
-
-    paymentBankTransactionId:
-      booking.paymentBankTransactionId || "",
-
-    paymentCardType:
-      booking.paymentCardType || "",
-
-    paymentMethod:
-      booking.paymentMethod || "",
-
-    paymentInitiatedAt:
-      booking.paymentInitiatedAt || null,
-
-    paymentPaidAt:
-      booking.paymentPaidAt || null,
-
-    expiresAt:
-      booking.expiresAt || null,
+    paymentInitiatedAt: booking.paymentInitiatedAt || null,
+    paymentPaidAt: booking.paymentPaidAt || null,
+    expiresAt: booking.expiresAt || null,
 
     checkedIn: booking.checkedIn,
     checkedInAt: booking.checkedInAt || null,
-
     checkedOut: booking.checkedOut,
     checkedOutAt: booking.checkedOutAt || null,
 
-    cancelledAt:
-      booking.cancelledAt || null,
-
-    cancellationReason:
-      booking.cancellationReason || "",
+    cancelledAt: booking.cancelledAt || null,
+    cancellationReason: booking.cancellationReason || "",
 
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
@@ -147,98 +125,54 @@ function serializeBooking(booking) {
 
 export async function GET(request) {
   try {
-    /*
-     * ---------------------------------------------------------
-     * ADMIN AUTHENTICATION
-     * ---------------------------------------------------------
-     */
-
+    // ADMIN AUTHENTICATION
     const auth = await requireAdmin();
 
     if (!auth.authenticated) {
       return jsonError("Unauthorized", 401);
     }
 
-    /*
-     * ---------------------------------------------------------
-     * DATABASE
-     * ---------------------------------------------------------
-     */
-
+    // DATABASE
     await connectDB();
 
-    /*
-     * ---------------------------------------------------------
-     * QUERY PARAMETERS
-     *
-     * Supported:
-     *
-     * ?page=1
-     * ?limit=50
-     * ?date=2026-10-10
-     * ?facilityId=...
-     * ?status=pending
-     * ?paymentStatus=paid
-     * ?search=tanim
-     * ---------------------------------------------------------
-     */
-
-    const { searchParams } =
-      new URL(request.url);
+    // QUERY PARAMETERS
+    const { searchParams } = new URL(request.url);
 
     const page = Math.max(
       1,
-      parsePositiveInteger(
-        searchParams.get("page"),
-        1
-      )
+      parsePositiveInteger(searchParams.get("page"), 1)
     );
 
     const limit = Math.min(
       MAX_LIMIT,
-      parsePositiveInteger(
-        searchParams.get("limit"),
-        50
-      )
+      parsePositiveInteger(searchParams.get("limit"), 50)
     );
 
-    const dateParam =
-      searchParams.get("date")?.trim() || "";
+    const dateParam = searchParams.get("date")?.trim() || "";
+    const monthParam = searchParams.get("month")?.trim() || "";
 
-    const facilityId =
-      searchParams.get("facilityId")?.trim() || "";
-
-    const status =
-      searchParams.get("status")?.trim() || "";
+    const facilityId = searchParams.get("facilityId")?.trim() || "";
+    const status = searchParams.get("status")?.trim() || "";
 
     const paymentStatus =
-      searchParams
-        .get("paymentStatus")
-        ?.trim() || "";
+      searchParams.get("paymentStatus")?.trim() || "";
 
-    const search =
-      searchParams.get("search")?.trim() || "";
+    const search = searchParams.get("search")?.trim() || "";
 
-    /*
-     * ---------------------------------------------------------
-     * BUILD QUERY
-     * ---------------------------------------------------------
-     */
-
+    // BUILD QUERY
     const query = {};
 
-    /*
-     * DATE FILTER
-     */
+    // DATE / MONTH FILTER
+    if (dateParam && monthParam) {
+      return jsonError("Select either a date or a month.");
+    }
 
+    // EXACT DATE FILTER
     if (dateParam) {
-      const startDate =
-        normalizeDate(dateParam);
+      const startDate = normalizeDate(dateParam);
 
       if (!startDate) {
-        return jsonError(
-          "Invalid date. Use YYYY-MM-DD."
-        );
+        return jsonError("Invalid date. Use YYYY-MM-DD.");
       }
 
       query.bookingDate = {
@@ -247,27 +181,45 @@ export async function GET(request) {
       };
     }
 
-    /*
-     * FACILITY FILTER
-     */
+    // MONTH FILTER
+    if (monthParam) {
+      const match = monthParam.match(/^(\d{4})-(\d{2})$/);
 
-    if (facilityId) {
-      if (!mongoose.isValidObjectId(facilityId)) {
-        return jsonError(
-          "Invalid facility ID."
-        );
+      if (!match) {
+        return jsonError("Invalid month. Use YYYY-MM.");
       }
 
-      query.facilityId =
-        new mongoose.Types.ObjectId(
-          facilityId
-        );
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+
+      if (month < 1 || month > 12) {
+        return jsonError("Invalid month.");
+      }
+
+      const startDate = new Date(
+        Date.UTC(year, month - 1, 1)
+      );
+
+      const endDate = new Date(
+        Date.UTC(year, month, 1)
+      );
+
+      query.bookingDate = {
+        $gte: startDate,
+        $lt: endDate,
+      };
     }
 
-    /*
-     * BOOKING STATUS FILTER
-     */
+    // FACILITY FILTER
+    if (facilityId) {
+      if (!mongoose.isValidObjectId(facilityId)) {
+        return jsonError("Invalid facility ID.");
+      }
 
+      query.facilityId = new mongoose.Types.ObjectId(facilityId);
+    }
+
+    // BOOKING STATUS FILTER
     const allowedStatuses = new Set([
       "pending",
       "confirmed",
@@ -277,157 +229,91 @@ export async function GET(request) {
 
     if (status) {
       if (!allowedStatuses.has(status)) {
-        return jsonError(
-          "Invalid booking status."
-        );
+        return jsonError("Invalid booking status.");
       }
 
       query.status = status;
     }
 
-    /*
-     * PAYMENT STATUS FILTER
-     */
-
-    const allowedPaymentStatuses =
-      new Set([
-        "unpaid",
-        "pending",
-        "paid",
-        "failed",
-        "refunded",
-      ]);
+    // PAYMENT STATUS FILTER
+    const allowedPaymentStatuses = new Set([
+      "unpaid",
+      "pending",
+      "paid",
+      "failed",
+      "refunded",
+    ]);
 
     if (paymentStatus) {
-      if (
-        !allowedPaymentStatuses.has(
-          paymentStatus
-        )
-      ) {
-        return jsonError(
-          "Invalid payment status."
-        );
+      if (!allowedPaymentStatuses.has(paymentStatus)) {
+        return jsonError("Invalid payment status.");
       }
 
-      query.paymentStatus =
-        paymentStatus;
+      query.paymentStatus = paymentStatus;
     }
 
-    /*
-     * SEARCH
-     *
-     * Search customer name/email/phone,
-     * booking reference and group reference.
-     */
-
+    // SEARCH
     if (search) {
-      const escapedSearch =
-        search.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&"
-        );
-
-      const regex = new RegExp(
-        escapedSearch,
-        "i"
+      const escapedSearch = search.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
       );
 
+      const regex = new RegExp(escapedSearch, "i");
+
       query.$or = [
-        {
-          bookingReference: regex,
-        },
-        {
-          bookingGroupReference: regex,
-        },
-        {
-          customerName: regex,
-        },
-        {
-          customerEmail: regex,
-        },
-        {
-          customerPhone: regex,
-        },
-        {
-          facilityName: regex,
-        },
-        {
-          serviceName: regex,
-        },
+        { bookingReference: regex },
+        { bookingGroupReference: regex },
+        { customerName: regex },
+        { customerEmail: regex },
+        { customerPhone: regex },
+        { facilityName: regex },
+        { serviceName: regex },
       ];
     }
 
-    /*
-     * ---------------------------------------------------------
-     * PAGINATION
-     * ---------------------------------------------------------
-     */
-
+    // PAGINATION
     const skip = (page - 1) * limit;
 
-    /*
-     * ---------------------------------------------------------
-     * FETCH BOOKINGS + TOTAL COUNT
-     * ---------------------------------------------------------
-     *
-     * Promise.all keeps both database operations
-     * running concurrently.
-     */
+    // FETCH BOOKINGS + TOTAL COUNT
+    const [bookings, total] = await Promise.all([
+      Booking.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
 
-    const [bookings, total] =
-      await Promise.all([
-        Booking.find(query)
-          .sort({
-            createdAt: -1,
-          })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
+      Booking.countDocuments(query),
+    ]);
 
-        Booking.countDocuments(query),
-      ]);
-
-    /*
-     * ---------------------------------------------------------
-     * RESPONSE
-     * ---------------------------------------------------------
-     */
-
-    const totalPages =
-      Math.ceil(total / limit);
+    // RESPONSE
+    const totalPages = Math.ceil(total / limit);
 
     return NextResponse.json({
       success: true,
 
-      data: bookings.map(
-        serializeBooking
-      ),
+      data: bookings.map(serializeBooking),
 
       pagination: {
         page,
         limit,
         total,
         totalPages,
-        hasNextPage:
-          page < totalPages,
-        hasPreviousPage:
-          page > 1,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
       },
 
       filters: {
         date: dateParam || null,
+        month: monthParam || null,
         facilityId: facilityId || null,
         status: status || null,
-        paymentStatus:
-          paymentStatus || null,
+        paymentStatus: paymentStatus || null,
         search: search || null,
       },
     });
   } catch (error) {
-    console.error(
-      "Admin bookings API error:",
-      error
-    );
+    console.error("Admin bookings API error:", error);
 
     return jsonError(
       "Unable to load bookings.",
@@ -440,14 +326,14 @@ export async function DELETE(request) {
   let session;
 
   try {
-    // 1. Authenticate admin
+    // AUTHENTICATE ADMIN
     const auth = await requireAdmin();
 
     if (!auth.authenticated) {
       return jsonError("Unauthorized", 401);
     }
 
-    // 2. Validate booking ID
+    // VALIDATE BOOKING ID
     const { searchParams } = new URL(request.url);
     const bookingId = searchParams.get("id")?.trim();
 
@@ -455,10 +341,10 @@ export async function DELETE(request) {
       return jsonError("Invalid booking ID.");
     }
 
-    // 3. Connect to MongoDB
+    // CONNECT TO DATABASE
     await connectDB();
 
-    // 4. Start an atomic transaction
+    // START TRANSACTION
     session = await mongoose.startSession();
 
     let bookingNotFound = false;
@@ -468,7 +354,7 @@ export async function DELETE(request) {
       bookingNotFound = false;
       deletedPaymentsCount = 0;
 
-      // Find only the requested booking
+      // FIND BOOKING
       const booking = await Booking.findById(bookingId)
         .session(session)
         .lean();
@@ -478,8 +364,7 @@ export async function DELETE(request) {
         return;
       }
 
-      // Identify payment records associated with this booking.
-      // A shared payment document is intentionally deleted too.
+      // IDENTIFY RELATED PAYMENT RECORDS
       const paymentConditions = [
         { bookingIds: booking._id },
       ];
@@ -497,7 +382,7 @@ export async function DELETE(request) {
         );
       }
 
-      // Delete associated payment records first, inside the transaction
+      // DELETE ASSOCIATED PAYMENTS
       const paymentResult = await Payment.deleteMany(
         { $or: paymentConditions },
         { session }
@@ -505,18 +390,17 @@ export async function DELETE(request) {
 
       deletedPaymentsCount = paymentResult.deletedCount || 0;
 
-            await BookingLock.deleteMany(
-              { bookingId: booking._id },
-              { session }
-            );
+      // DELETE BOOKING LOCKS
+      await BookingLock.deleteMany(
+        { bookingId: booking._id },
+        { session }
+      );
 
-      // Delete only the selected booking
+      // DELETE SELECTED BOOKING
       const bookingResult = await Booking.deleteOne(
         { _id: booking._id },
         { session }
       );
-
-
 
       if (bookingResult.deletedCount !== 1) {
         throw new Error("Booking deletion failed.");
@@ -530,6 +414,7 @@ export async function DELETE(request) {
     return NextResponse.json({
       success: true,
       message: "Booking permanently deleted.",
+
       deleted: {
         bookings: 1,
         payments: deletedPaymentsCount,
