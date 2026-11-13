@@ -1,5 +1,5 @@
 
-export function bookingConfirmationEmail(data) {
+export default function bookingConfirmationEmail(data) {
   const escapeHtml = (value = "") =>
     String(value).replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",

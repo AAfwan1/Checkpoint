@@ -1,5 +1,5 @@
 
-import  bookingConfirmationEmail from "./emailtemplates/bookingConfirmation"
+import  bookingConfirmationEmail from "./emailtemplates/bookingConfirmation.js"
 
 export async function sendBookingEmail(booking) {
   const response = await fetch(
