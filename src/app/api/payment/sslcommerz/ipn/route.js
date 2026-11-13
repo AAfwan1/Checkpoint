@@ -320,8 +320,23 @@ export async function POST(request) {
         console.error("Membership provisioning failed for already-paid transaction:", error);
         return respond("Payment is confirmed but membership provisioning requires retry.", 503);
       }
+      console.log("SENDING EMAIL FROM ALREADY-PAID BRANCH:", bookings[0]?.customerEmail);
+      try {
+  await sendBookingEmail({
+    to: bookings[0].customerEmail,
+    customerName: bookings[0].customerName,
+    bookingGroupReference,
+    bookings,
+    totalAmount: bookings.reduce(
+      (total, booking) => total + Number(booking.totalAmount || 0),
+      0
+    ),
+  });
+} catch (error) {
+  console.error("Booking email failed:", error);
+}
 
-      return respond("Payment already processed.");
+return respond("Payment already processed.");
     }
 
     if (!SUCCESS_STATUSES.has(ipnStatus)) {
@@ -533,18 +548,7 @@ export async function POST(request) {
       paymentStatus: "paid",
     }).lean();
 
-// Send confirmation email
-try {
-  await sendBookingEmail({
-    to: confirmedBookings[0].customerEmail,
-    customerName: confirmedBookings[0].customerName,
-    bookingGroupReference,
-    bookings: confirmedBookings,
-    totalAmount: expectedAmount,
-  });
-} catch (error) {
-  console.error("Booking email failed:", error);
-}
+
 
     let membershipResult;
 
@@ -562,6 +566,19 @@ try {
       membershipsCreated: membershipResult.created,
       membershipsAlreadyExisting: membershipResult.existing,
     });
+
+    // Send confirmation email
+try {
+  await sendBookingEmail({
+    to: confirmedBookings[0].customerEmail,
+    customerName: confirmedBookings[0].customerName,
+    bookingGroupReference,
+    bookings: confirmedBookings,
+    totalAmount: expectedAmount,
+  });
+} catch (error) {
+  console.error("Booking email failed:", error);
+}
 
     return respond("Payment validated, bookings confirmed, and memberships provisioned.");
   } catch (error) {

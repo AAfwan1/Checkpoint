@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 
 import { connectDB } from "@/lib/mongodb";
@@ -7,6 +8,7 @@ import BookingLock from "@/models/bookingLock";
 import Payment from "@/models/payment";
 import Facility from "@/models/facility";
 import Membership from "@/models/membership";
+import { sendBookingEmail } from "@/lib/sendBookingEmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -304,15 +306,6 @@ async function createMembershipsForPaidBookings(
   bookings,
   transactionId
 ) {
-  console.log(
-    "========== MEMBERSHIP FUNCTION START =========="
-  );
-
-  console.log({
-    transactionId,
-    bookingCount: bookings.length,
-  });
-
   const eligibleBookings =
     bookings.filter(
       (booking) =>
@@ -320,48 +313,13 @@ async function createMembershipsForPaidBookings(
         booking.paymentStatus === "paid"
     );
 
-  console.log(
-    "Eligible paid/confirmed bookings:",
-    eligibleBookings.length
-  );
-
   if (!eligibleBookings.length) {
-    console.log(
-      "No paid/confirmed bookings require membership provisioning."
-    );
-
     return [];
   }
 
   const createdMemberships = [];
 
   for (const booking of eligibleBookings) {
-    console.log(
-      "---------- MEMBERSHIP BOOKING ----------"
-    );
-
-    console.log({
-      bookingId: booking._id?.toString(),
-      bookingReference:
-        booking.bookingReference,
-      bookingGroupReference:
-        booking.bookingGroupReference,
-      facilityId:
-        booking.facilityId?.toString(),
-      serviceId:
-        booking.serviceId?.toString(),
-      serviceName:
-        booking.serviceName,
-      customerEmail:
-        booking.customerEmail,
-      totalAmount:
-        booking.totalAmount,
-    });
-
-    // --------------------------------------------------------
-    // EXACT FACILITY LOOKUP
-    // --------------------------------------------------------
-
     const facility =
       await Facility.findById(
         booking.facilityId
@@ -377,20 +335,6 @@ async function createMembershipsForPaidBookings(
       );
     }
 
-    console.log(
-      "Exact facility found:",
-      {
-        facilityId:
-          facility._id.toString(),
-        name: facility.name,
-        slug: facility.slug,
-      }
-    );
-
-    // --------------------------------------------------------
-    // EXACT SERVICE LOOKUP
-    // --------------------------------------------------------
-
     const service =
       (facility.services || []).find(
         (item) =>
@@ -404,50 +348,12 @@ async function createMembershipsForPaidBookings(
       );
     }
 
-    console.log(
-      "Exact booked service found:",
-      {
-        serviceId:
-          service._id?.toString(),
-        name: service.name,
-        slug: service.slug,
-        type: service.type,
-        pricingType:
-          service.pricingType,
-        price: service.price,
-      }
-    );
-
-    // --------------------------------------------------------
-    // MEMBERSHIP DETECTION
-    // --------------------------------------------------------
-
     const membershipDefinition =
       getMembershipDefinition(service);
 
-    console.log(
-      "Membership service detection:",
-      {
-        slug: service.slug,
-        isMembership:
-          Boolean(
-            membershipDefinition
-          ),
-        membershipDefinition,
-      }
-    );
-
     if (!membershipDefinition) {
-      console.log(
-        "Booking is not a monthly membership. Skipping."
-      );
-
       continue;
     }
-
-    // --------------------------------------------------------
-    // QUANTITY
-    // --------------------------------------------------------
 
     const quantity =
       Number(booking.quantity);
@@ -457,10 +363,6 @@ async function createMembershipsForPaidBookings(
         `Membership booking ${booking.bookingReference} must have quantity 1.`
       );
     }
-
-    // --------------------------------------------------------
-    // CUSTOMER DATA
-    // --------------------------------------------------------
 
     const customerName =
       normalizeString(
@@ -487,10 +389,6 @@ async function createMembershipsForPaidBookings(
       );
     }
 
-    // --------------------------------------------------------
-    // DATES
-    // --------------------------------------------------------
-
     const startDate =
       new Date(booking.bookingDate);
 
@@ -507,10 +405,6 @@ async function createMembershipsForPaidBookings(
     const expiryDate =
       addOneMonth(startDate);
 
-    // --------------------------------------------------------
-    // PRICE
-    // --------------------------------------------------------
-
     const price =
       Number(booking.priceAtBooking);
 
@@ -522,10 +416,6 @@ async function createMembershipsForPaidBookings(
         `Invalid membership price for booking ${booking.bookingReference}.`
       );
     }
-
-    // --------------------------------------------------------
-    // IDEMPOTENCY
-    // --------------------------------------------------------
 
     const activationNote =
       `Activated via SSLCommerz transaction ${transactionId}`;
@@ -541,17 +431,6 @@ async function createMembershipsForPaidBookings(
       }).lean();
 
     if (existingMembership) {
-      console.log(
-        "Membership already exists:",
-        {
-          membershipId:
-            existingMembership._id?.toString(),
-          membershipCode:
-            existingMembership.membershipCode,
-          transactionId,
-        }
-      );
-
       createdMemberships.push(
         existingMembership
       );
@@ -559,16 +438,11 @@ async function createMembershipsForPaidBookings(
       continue;
     }
 
-    // --------------------------------------------------------
-    // MEMBERSHIP CODE
-    // --------------------------------------------------------
-
     let membershipCode =
       await generateMembershipCode(
         startDate
       );
 
-    // Extra uniqueness protection.
     for (let attempt = 0; attempt < 10; attempt++) {
       const codeExists =
         await Membership.exists({
@@ -584,15 +458,6 @@ async function createMembershipsForPaidBookings(
           startDate
         )}-${1001 + attempt + 1}`;
     }
-
-    console.log(
-      "Generated membership code:",
-      membershipCode
-    );
-
-    // --------------------------------------------------------
-    // CREATE MEMBERSHIP
-    // --------------------------------------------------------
 
     const membership =
       await Membership.create({
@@ -629,51 +494,10 @@ async function createMembershipsForPaidBookings(
         notes: activationNote,
       });
 
-    console.log(
-      "========== MEMBERSHIP CREATED =========="
-    );
-
-    console.log({
-      membershipId:
-        membership._id.toString(),
-
-      membershipCode:
-        membership.membershipCode,
-
-      customerEmail:
-        membership.customerEmail,
-
-      membershipType:
-        membership.membershipType,
-
-      facilities:
-        membership.facilities,
-
-      price:
-        membership.price,
-
-      startDate:
-        membership.startDate,
-
-      expiryDate:
-        membership.expiryDate,
-
-      transactionId,
-    });
-
     createdMemberships.push(
       membership
     );
   }
-
-  console.log(
-    "========== MEMBERSHIP FUNCTION END =========="
-  );
-
-  console.log(
-    "Memberships created/found:",
-    createdMemberships.length
-  );
 
   return createdMemberships;
 }
@@ -1167,28 +991,6 @@ async function initializePayment(
     bookingGroupReference
   );
 
-  console.log(
-    "========== SSL PAYMENT INITIATION =========="
-  );
-
-  console.log({
-    environment:
-      isSandbox()
-        ? "SANDBOX"
-        : "LIVE",
-
-    gatewayURL,
-
-    bookingGroupReference,
-
-    transactionId,
-
-    totalAmount,
-
-    bookingCount:
-      verifiedBookings.length,
-  });
-
   let gatewayResponse;
 
   try {
@@ -1226,11 +1028,6 @@ async function initializePayment(
     );
   }
 
-  console.log(
-    "SSLCommerz initiation HTTP status:",
-    gatewayResponse.status
-  );
-
   let gatewayData;
 
   try {
@@ -1247,32 +1044,6 @@ async function initializePayment(
       502
     );
   }
-
-  console.log(
-    "SSLCommerz initiation response:",
-    {
-      status:
-        gatewayData?.status,
-
-      failedreason:
-        gatewayData?.failedreason,
-
-      hasGatewayPageURL:
-        Boolean(
-          gatewayData?.GatewayPageURL
-        ),
-
-      hasRedirectGatewayURL:
-        Boolean(
-          gatewayData?.redirectGatewayURL
-        ),
-
-      sessionkey:
-        Boolean(
-          gatewayData?.sessionkey
-        ),
-    }
-  );
 
   const gatewayStatus =
     normalizeString(
@@ -1371,22 +1142,6 @@ async function processIPN(
   data,
   credentials
 ) {
-  console.log(
-    "========== SSL IPN START =========="
-  );
-
-  console.log(
-    "SSLCommerz environment:",
-    isSandbox()
-      ? "SANDBOX"
-      : "LIVE"
-  );
-
-  console.log(
-    "IPN validation URL:",
-    getValidationURL()
-  );
-
   const tranId =
     normalizeString(
       data?.tran_id
@@ -1417,18 +1172,6 @@ async function processIPN(
       data?.value_a
     ).toUpperCase();
 
-  console.log(
-    "IPN parsed:",
-    {
-      tranId,
-      valId,
-      ipnStatus,
-      ipnAmount,
-      ipnCurrency,
-      ipnGroupReference,
-    }
-  );
-
   if (!tranId) {
     console.error(
       "IPN missing transaction ID."
@@ -1449,11 +1192,6 @@ async function processIPN(
       paymentTransactionId:
         tranId,
     });
-
-  console.log(
-    "Bookings found for transaction:",
-    bookings.length
-  );
 
   if (!bookings.length) {
     console.error(
@@ -1556,11 +1294,6 @@ async function processIPN(
     );
 
   if (allAlreadyPaid) {
-    console.log(
-      "Payment was already processed:",
-      tranId
-    );
-
     await BookingLock.updateMany(
       {
         bookingGroupReference,
@@ -1598,9 +1331,6 @@ async function processIPN(
       }
     );
 
-    // IMPORTANT:
-    // Even when payment was already processed,
-    // retry membership provisioning.
     try {
       await createMembershipsForPaidBookings(
         bookings,
@@ -1647,41 +1377,35 @@ async function processIPN(
       ipnStatus === "CANCELLED" ||
       ipnStatus === "CANCELED"
     ) {
-      const failedResult =
-        await Booking.updateMany(
-          {
-            paymentTransactionId:
-              tranId,
+      await Booking.updateMany(
+        {
+          paymentTransactionId:
+            tranId,
 
+          status:
+            "pending",
+
+          paymentStatus:
+            "pending",
+        },
+        {
+          $set: {
             status:
-              "pending",
+              "cancelled",
 
             paymentStatus:
-              "pending",
+              "failed",
+
+            cancelledAt:
+              new Date(),
+
+            expiresAt:
+              null,
+
+            cancellationReason:
+              `SSLCommerz payment status: ${ipnStatus}`,
           },
-          {
-            $set: {
-              status:
-                "cancelled",
-
-              paymentStatus:
-                "failed",
-
-              cancelledAt:
-                new Date(),
-
-              expiresAt:
-                null,
-
-              cancellationReason:
-                `SSLCommerz payment status: ${ipnStatus}`,
-            },
-          }
-        );
-
-      console.log(
-        "Failed/cancelled bookings updated:",
-        failedResult
+        }
       );
 
       await BookingLock.deleteMany(
@@ -1769,23 +1493,6 @@ async function processIPN(
     "json"
   );
 
-  console.log(
-    "Calling SSLCommerz validation:",
-    {
-      environment:
-        isSandbox()
-          ? "SANDBOX"
-          : "LIVE",
-
-      url:
-        validationURL,
-
-      tranId,
-
-      valId,
-    }
-  );
-
   let validationResponse;
 
   try {
@@ -1815,11 +1522,6 @@ async function processIPN(
     );
   }
 
-  console.log(
-    "SSLCommerz validation HTTP status:",
-    validationResponse.status
-  );
-
   if (!validationResponse.ok) {
     return safeResponse(
       "Payment validation failed temporarily.",
@@ -1832,11 +1534,6 @@ async function processIPN(
   try {
     validation =
       await validationResponse.json();
-
-    console.log(
-      "SSLCommerz validation status:",
-      validation?.status
-    );
   } catch {
     console.error(
       "SSLCommerz validation returned invalid JSON."
@@ -1985,15 +1682,6 @@ async function processIPN(
       validation?.amount
     );
 
-  console.log(
-    "Payment amounts:",
-    {
-      expectedAmount,
-      validatedAmount,
-      ipnAmount,
-    }
-  );
-
   if (
     validatedAmount === null ||
     !amountsMatch(
@@ -2103,12 +1791,6 @@ async function processIPN(
         data?.risk_level ??
         ""
     ).trim();
-
-  console.log(
-    "SSLCommerz risk level:",
-    riskLevel ||
-      "not provided"
-  );
 
   if (
     riskLevel === "1"
@@ -2223,25 +1905,6 @@ async function processIPN(
       "",
   };
 
-  console.log(
-    "========== CONFIRMING BOOKING =========="
-  );
-
-  console.log({
-    tranId,
-
-    bookingGroupReference,
-
-    bookingCount:
-      bookings.length,
-
-    expectedAmount,
-
-    validatedAmount,
-
-    validationStatus,
-  });
-
   const updateResult =
     await Booking.updateMany(
       {
@@ -2263,20 +1926,6 @@ async function processIPN(
           paymentUpdate,
       }
     );
-
-  console.log(
-    "Booking update result:",
-    {
-      matched:
-        updateResult.matchedCount,
-
-      modified:
-        updateResult.modifiedCount,
-
-      acknowledged:
-        updateResult.acknowledged,
-    }
-  );
 
   // ----------------------------------------------------------
   // VERIFY EVERY BOOKING WAS CONFIRMED
@@ -2340,27 +1989,15 @@ async function processIPN(
   // MAKE LOCKS PERMANENT
   // ----------------------------------------------------------
 
-  const lockUpdateResult =
-    await BookingLock.updateMany(
-      {
-        bookingGroupReference,
-      },
-      {
-        $set: {
-          expiresAt:
-            null,
-        },
-      }
-    );
-
-  console.log(
-    "Booking locks made permanent:",
+  await BookingLock.updateMany(
     {
-      matched:
-        lockUpdateResult.matchedCount,
-
-      modified:
-        lockUpdateResult.modifiedCount,
+      bookingGroupReference,
+    },
+    {
+      $set: {
+        expiresAt:
+          null,
+      },
     }
   );
 
@@ -2432,12 +2069,6 @@ async function processIPN(
   // MEMBERSHIP PROVISIONING
   // ----------------------------------------------------------
 
-  console.log(
-    "========== STARTING MEMBERSHIP PROVISIONING =========="
-  );
-
-  // Re-fetch from MongoDB after the payment update.
-  // This guarantees we use the newly confirmed state.
   const confirmedBookings =
     await Booking.find({
       paymentTransactionId:
@@ -2449,11 +2080,6 @@ async function processIPN(
       paymentStatus:
         "paid",
     }).lean();
-
-  console.log(
-    "Confirmed paid bookings for membership provisioning:",
-    confirmedBookings.length
-  );
 
   if (
     confirmedBookings.length !==
@@ -2485,19 +2111,9 @@ async function processIPN(
     );
   } catch (error) {
     console.error(
-      "========== MEMBERSHIP PROVISIONING FAILED =========="
-    );
-
-    console.error(
       "Membership provisioning failed:",
       error
     );
-
-    // IMPORTANT:
-    // Payment remains paid and booking remains confirmed.
-    // Returning 503 allows the gateway/retry mechanism to
-    // invoke this route again. The provisioning function is
-    // idempotent, so it will not create duplicate memberships.
 
     return safeResponse(
       "Payment confirmed but membership provisioning requires retry.",
@@ -2505,34 +2121,32 @@ async function processIPN(
     );
   }
 
-  console.log(
-    "========== MEMBERSHIP PROVISIONING COMPLETE =========="
-  );
+  // ----------------------------------------------------------
+  // BOOKING CONFIRMATION EMAIL
+  // ----------------------------------------------------------
+
+  try {
+    await sendBookingEmail({
+      to: confirmedBookings[0].customerEmail,
+      customerName: confirmedBookings[0].customerName,
+      bookingGroupReference,
+      bookings: confirmedBookings,
+      totalAmount: expectedAmount,
+    });
+
+    console.log(
+      "Booking confirmation email sent."
+    );
+  } catch (error) {
+    console.error(
+      "Booking email failed:",
+      error
+    );
+  }
 
   // ----------------------------------------------------------
   // SUCCESS
   // ----------------------------------------------------------
-
-  console.log(
-    "========== SSL PAYMENT CONFIRMED =========="
-  );
-
-  console.log(
-    "SSLCommerz payment confirmed:",
-    {
-      tranId,
-
-      bookingGroupReference,
-
-      bookingCount:
-        bookings.length,
-
-      amount:
-        expectedAmount,
-
-      validationStatus,
-    }
-  );
 
   return safeResponse(
     "Payment validated, bookings confirmed, and memberships provisioned.",
@@ -2585,15 +2199,6 @@ export async function POST(request) {
       bookingGroupReference &&
       !tranId
     ) {
-      console.log(
-        "========== PAYMENT INITIALIZATION REQUEST =========="
-      );
-
-      console.log({
-        bookingGroupReference:
-          bookingGroupReference.toUpperCase(),
-      });
-
       return await initializePayment(
         request,
         data,
@@ -2605,20 +2210,12 @@ export async function POST(request) {
     // SSLCommerz IPN
     // --------------------------------------------------------
 
-    console.log(
-      "========== SSLCommerz IPN REQUEST =========="
-    );
-
     return await processIPN(
       request,
       data,
       credentials
     );
   } catch (error) {
-    console.error(
-      "========== SSL PAYMENT/IPN PROCESSING FAILED =========="
-    );
-
     console.error(
       "SSLCommerz processing failed:",
       error

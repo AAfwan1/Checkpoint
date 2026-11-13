@@ -25,10 +25,10 @@ export default function RootLayout({ children }) {
 
     url: "https://www.checkpoint.place/",
 
-    logo: "https://www.checkpoint.place/logo2.png",
+    logo: "https://www.checkpoint.place/new-logo.png",
 
     image: [
-      "https://www.checkpoint.place/logo2.png",
+      "https://www.checkpoint.place/new-logo.png",
     ],
 
     description:

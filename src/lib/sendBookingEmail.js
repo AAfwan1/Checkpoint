@@ -1,5 +1,5 @@
 
-import  bookingConfirmationEmail from "./emailtemplates/bookingConfirmation.js"
+import bookingConfirmationEmail from "./emailtemplates/bookingConfirmation.js";
 
 export async function sendBookingEmail(booking) {
   const response = await fetch(
@@ -18,19 +18,23 @@ export async function sendBookingEmail(booking) {
         },
         to: [
           {
-            email: booking.email,
-            name: booking.guestName,
+            email: booking.to,
+            name: booking.customerName,
           },
         ],
-        subject: "Booking Confirmation - Thakben",
-        htmlContent: bookingConfirmationEmail(booking),
+        subject: `Booking Confirmation - ${booking.bookingGroupReference}`,
+        htmlContent: bookingConfirmationEmail({
+          customer: { name: booking.customerName },
+          bookingGroupReference: booking.bookingGroupReference,
+          bookings: booking.bookings,
+          totalAmount: booking.totalAmount,
+        }),
       }),
     }
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Brevo error: ${error}`);
+    throw new Error(`Brevo error: ${await response.text()}`);
   }
 
   return response.json();

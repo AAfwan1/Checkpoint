@@ -100,7 +100,7 @@ export const metadata = {
 
     images: [
       {
-        url: "https://www.checkpoint.place/logo2.png",
+        url: "https://www.checkpoint.place/new-logo.png",
         width: 1200,
         height: 800,
         alt: "The Checkpoint gaming and entertainment center in Dhaka",
@@ -118,7 +118,7 @@ export const metadata = {
       "Premium gaming, movies, VR, racing simulator, restaurant, gym and swimming experiences in Bashundhara, Dhaka.",
 
     images: [
-      "https://www.checkpoint.place/logo2.png",
+      "https://www.checkpoint.place/new-logo.png",
     ],
   },
 };
