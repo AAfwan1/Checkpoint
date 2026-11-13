@@ -5,6 +5,7 @@ import Booking from "@/models/booking";
 import BookingLock from "@/models/bookingLock";
 import Facility from "@/models/facility";
 import Membership from "@/models/membership";
+import { sendBookingEmail } from "@/lib/sendBookingEmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -531,6 +532,19 @@ export async function POST(request) {
       status: "confirmed",
       paymentStatus: "paid",
     }).lean();
+
+// Send confirmation email
+try {
+  await sendBookingEmail({
+    to: confirmedBookings[0].customerEmail,
+    customerName: confirmedBookings[0].customerName,
+    bookingGroupReference,
+    bookings: confirmedBookings,
+    totalAmount: expectedAmount,
+  });
+} catch (error) {
+  console.error("Booking email failed:", error);
+}
 
     let membershipResult;
 

@@ -8,7 +8,7 @@ import { gaming } from "@/generated/gallery-data";
 
 const menuImages = [
   {
-    src: gaming.images.find((image) => image.includes("/4.webp")),
+    src: gaming.images.find((image) => image.includes("/5.webp")),
     alt: "The Checkpoint gaming prices and session rates in Bashundhara Dhaka",
     label: "GAME PRICING",
   },
