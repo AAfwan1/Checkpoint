@@ -28,9 +28,7 @@ export default function RootLayout({ children }) {
     logo: "https://www.checkpoint.place/logo2.png",
 
     image: [
-      "https://www.checkpoint.place/view7.webp",
-      "https://www.checkpoint.place/view6.jpeg",
-      "https://www.checkpoint.place/view11.jpg",
+      "https://www.checkpoint.place/logo2.png",
     ],
 
     description:
