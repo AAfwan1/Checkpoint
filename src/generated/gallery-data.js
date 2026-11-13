@@ -95,7 +95,7 @@ const gaming = {
   images: [
     "https://checkpoint-media.b-cdn.net/the-checkpoint/gaming/1.webp",
     "https://checkpoint-media.b-cdn.net/the-checkpoint/gaming/2.webp",
-    "https://checkpoint-media.b-cdn.net/the-checkpoint/gaming/4.webp",
+    "https://checkpoint-media.b-cdn.net/the-checkpoint/gaming/5.webp",
   ],
 };
 
